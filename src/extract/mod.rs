@@ -1,0 +1,334 @@
+use core::future::Future;
+use std::{convert::Infallible, sync::Arc};
+
+use http::{request::Parts, Extensions, HeaderMap, Method, StatusCode, Uri, Version};
+
+use crate::{IntoResponse, Request, Response};
+
+pub trait FromRequestParts<S>: Sized {
+    type Rejection: IntoResponse;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+}
+
+mod private {
+    #[derive(Debug, Clone, Copy)]
+    pub enum ViaParts {}
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum ViaRequest {}
+}
+
+pub trait FromRequest<S, Z = private::ViaRequest>: Sized {
+    type Rejection: IntoResponse;
+
+    fn from_request(
+        req: Request,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+}
+
+impl<S> FromRequest<S> for Request {
+    type Rejection = Infallible;
+
+    fn from_request(
+        req: Request,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(req)
+    }
+}
+
+impl<S, T> FromRequest<S, private::ViaParts> for T
+where
+    S: Send + Sync,
+    T: FromRequestParts<S>,
+{
+    type Rejection = <Self as FromRequestParts<S>>::Rejection;
+
+    fn from_request(
+        req: Request,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            let (mut parts, _) = req.into_parts();
+            Self::from_request_parts(&mut parts, state).await
+        }
+    }
+}
+
+pub mod body;
+pub mod path;
+
+pub use body::{CollectedBytes, Limited};
+pub use path::Path;
+
+macro_rules! impl_from_request {
+    ([$($t:ident),*], $last:ident) => {
+        impl<S, $($t,)* $last> FromRequestParts<S> for ($($t,)* $last,)
+        where
+            $($t: FromRequestParts<S> + Send,)*
+            $last: FromRequestParts<S> + Send,
+            S: Send + Sync,
+        {
+            type Rejection = Response;
+
+            fn from_request_parts(
+                parts: &mut Parts,
+                state: &S,
+            ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+                async move {
+                    Ok((
+                        $($t::from_request_parts(parts, state).await.map_err(IntoResponse::into_response)?,)*
+                        $last::from_request_parts(parts, state).await.map_err(IntoResponse::into_response)?,
+                    ))
+                }
+            }
+        }
+
+        impl<$($t,)* $last, S> FromRequest<S> for ($($t,)* $last,)
+        where
+            $($t: FromRequestParts<S> + Send,)*
+            $last: FromRequest<S> + Send,
+            S: Send + Sync,
+        {
+            type Rejection = Response;
+
+            fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+                async move {
+                    #[allow(unused_mut)]
+                    let (mut parts, body) = req.into_parts();
+
+                    Ok((
+                        $($t::from_request_parts(&mut parts, state).await.map_err(IntoResponse::into_response)?,)*
+
+                        $last::from_request(Request::from_parts(parts, body), state).await.map_err(IntoResponse::into_response)?,
+                    ))
+                }
+            }
+        }
+    };
+}
+
+all_the_tuples!(impl_from_request);
+
+#[repr(transparent)]
+pub struct State<S>(pub S);
+#[repr(transparent)]
+pub struct Extension<E>(pub E);
+
+impl<S> FromRequestParts<S> for State<S>
+where
+    S: Clone + Send,
+{
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        _parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        core::future::ready(Ok(State(state.clone())))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MissingExtension;
+
+impl IntoResponse for MissingExtension {
+    fn into_response(self) -> Response {
+        ("Missing extension", StatusCode::INTERNAL_SERVER_ERROR).into_response()
+    }
+}
+
+impl<S, E> FromRequestParts<S> for Extension<E>
+where
+    E: Clone + Send + Sync + 'static,
+{
+    type Rejection = MissingExtension;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        core::future::ready(match parts.extensions.get::<E>() {
+            Some(extension) => Ok(Extension(extension.clone())),
+            None => Err(MissingExtension),
+        })
+    }
+}
+
+impl<S> FromRequestParts<S> for () {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        _parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(())
+    }
+}
+
+impl<S, T> FromRequest<S> for Option<T>
+where
+    T: FromRequest<S> + Send,
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    fn from_request(
+        req: Request,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move { Ok(T::from_request(req, state).await.ok()) }
+    }
+}
+
+impl<S, T> FromRequestParts<S> for Option<T>
+where
+    T: FromRequestParts<S> + Send,
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move { Ok(T::from_request_parts(parts, state).await.ok()) }
+    }
+}
+
+impl<S, T> FromRequest<S> for Result<T, T::Rejection>
+where
+    T: FromRequest<S>,
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    fn from_request(
+        req: Request,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move { Ok(T::from_request(req, state).await) }
+    }
+}
+
+impl<S, T> FromRequestParts<S> for Result<T, T::Rejection>
+where
+    T: FromRequestParts<S>,
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move { Ok(T::from_request_parts(parts, state).await) }
+    }
+}
+
+impl<S> FromRequestParts<S> for Method {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(parts.method.clone())
+    }
+}
+
+impl<S> FromRequestParts<S> for Parts {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(parts.clone())
+    }
+}
+
+impl<S> FromRequestParts<S> for Uri {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(parts.uri.clone())
+    }
+}
+
+impl<S> FromRequestParts<S> for Version {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(parts.version)
+    }
+}
+
+impl<S> FromRequestParts<S> for HeaderMap {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(parts.headers.clone())
+    }
+}
+
+impl<S> FromRequestParts<S> for Extensions {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(parts.extensions.clone())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchedPath(pub Arc<str>);
+
+#[derive(Debug, thiserror::Error)]
+pub enum MatchedPathRejection {
+    #[error("missing matched path")]
+    MatchedPathMissing,
+}
+
+impl IntoResponse for MatchedPathRejection {
+    fn into_response(self) -> Response {
+        IntoResponse::into_response(match self {
+            MatchedPathRejection::MatchedPathMissing => {
+                ("missing matched path", StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        })
+    }
+}
+
+impl<S> FromRequestParts<S> for MatchedPath {
+    type Rejection = MatchedPathRejection;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ready(
+            parts
+                .extensions
+                .get::<Self>()
+                .cloned()
+                .ok_or(MatchedPathRejection::MatchedPathMissing),
+        )
+    }
+}
