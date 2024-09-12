@@ -213,12 +213,6 @@ where
     ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
         let (mut parts, body) = req.into_parts();
 
-        let mini_method = match parts.method {
-            Method::HEAD => MiniMethod::Head,
-            Method::CONNECT => MiniMethod::Connect,
-            _ => MiniMethod::Other,
-        };
-
         let handler = match self.match_route(&parts.method, parts.uri.path()) {
             Ok(match_) => {
                 crate::params::insert_url_params(&mut parts.extensions, match_.params);
@@ -234,9 +228,14 @@ where
             Err(None) => return NotFound.boxed().map(cleanup_body(MiniMethod::Other)),
         };
 
-        let req = Request::from_parts(parts, body);
+        let mini_method = match parts.method {
+            Method::HEAD => MiniMethod::Head,
+            Method::CONNECT => MiniMethod::Connect,
+            _ => MiniMethod::Other,
+        };
+
         handler
-            .call(req, self.state.clone())
+            .call(Request::from_parts(parts, body), self.state.clone())
             .map(cleanup_body(mini_method))
     }
 }
