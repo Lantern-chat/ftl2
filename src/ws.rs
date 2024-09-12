@@ -10,7 +10,7 @@ use std::task::{Context, Poll};
 use headers::{
     Connection, HeaderMapExt, SecWebsocketAccept, SecWebsocketKey, SecWebsocketVersion, Upgrade,
 };
-use http::{Method, StatusCode};
+use http::{HeaderName, HeaderValue, Method, StatusCode, Version};
 use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
 use tokio_tungstenite::{
@@ -20,21 +20,27 @@ use tokio_tungstenite::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsRejection {
-    MethodNotAllowed,
+    MethodNotGet,
+    MethodNotConnect,
     MissingUpgrade,
     IncorrectUpgrade,
     IncorrectWebSocketVersion,
+    InvalidProtocolPsuedoHeader,
     MissingWebSocketKey,
 }
 
 impl IntoResponse for WsRejection {
     fn into_response(self) -> Response {
         IntoResponse::into_response(match self {
-            WsRejection::MethodNotAllowed => ("Method Not Allowed", StatusCode::METHOD_NOT_ALLOWED),
+            WsRejection::MethodNotGet => ("Method Not GET", StatusCode::METHOD_NOT_ALLOWED),
+            WsRejection::MethodNotConnect => ("Method Not CONNECT", StatusCode::METHOD_NOT_ALLOWED),
             WsRejection::MissingUpgrade => ("Missing Upgrade header", StatusCode::BAD_REQUEST),
             WsRejection::IncorrectUpgrade => ("Incorrect Upgrade header", StatusCode::BAD_REQUEST),
             WsRejection::IncorrectWebSocketVersion => {
                 ("Incorrect WebSocket version", StatusCode::BAD_REQUEST)
+            }
+            WsRejection::InvalidProtocolPsuedoHeader => {
+                ("Invalid protocol psuedo-header", StatusCode::BAD_REQUEST)
             }
             WsRejection::MissingWebSocketKey => {
                 ("Missing Sec-WebSocket-Key header", StatusCode::BAD_REQUEST)
@@ -44,7 +50,9 @@ impl IntoResponse for WsRejection {
 }
 
 pub struct Ws {
-    key: SecWebsocketKey,
+    /// `None` if HTTP/2
+    key: Option<SecWebsocketKey>,
+    sec_websocket_protocol: Option<HeaderValue>,
     config: protocol::WebSocketConfig,
     on_upgrade: Option<OnUpgrade>,
 }
@@ -57,36 +65,58 @@ impl<S> FromRequest<S> for Ws {
         _state: &S,
     ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
-            if req.method() != Method::GET {
-                return Err(WsRejection::MethodNotAllowed);
-            }
-
             let headers = req.headers();
 
-            match headers.typed_get::<Connection>() {
-                Some(header) if header.contains("upgrade") => {}
-                _ => return Err(WsRejection::MissingUpgrade),
-            }
+            let key = if req.version() <= Version::HTTP_11 {
+                if req.method() != Method::GET {
+                    return Err(WsRejection::MethodNotGet);
+                }
 
-            match headers.typed_get::<Upgrade>() {
-                Some(upgrade) if upgrade == Upgrade::websocket() => {}
-                _ => return Err(WsRejection::IncorrectUpgrade),
-            }
+                match headers.typed_get::<Connection>() {
+                    Some(header) if header.contains("upgrade") => {}
+                    _ => return Err(WsRejection::MissingUpgrade),
+                }
+
+                match headers.typed_get::<Upgrade>() {
+                    Some(upgrade) if upgrade == Upgrade::websocket() => {}
+                    _ => return Err(WsRejection::IncorrectUpgrade),
+                }
+
+                match headers.typed_get() {
+                    Some(key) => Some(key),
+                    None => return Err(WsRejection::MissingWebSocketKey),
+                }
+            } else {
+                if req.method() != Method::CONNECT {
+                    return Err(WsRejection::MethodNotConnect);
+                }
+
+                if req
+                    .extensions()
+                    .get::<hyper::ext::Protocol>()
+                    .map_or(true, |p| p.as_str() != "websocket")
+                {
+                    return Err(WsRejection::InvalidProtocolPsuedoHeader);
+                }
+
+                None
+            };
 
             match headers.typed_get::<SecWebsocketVersion>() {
                 Some(SecWebsocketVersion::V13) => {}
                 _ => return Err(WsRejection::IncorrectWebSocketVersion),
             }
 
-            let key: SecWebsocketKey = match headers.typed_get() {
-                Some(key) => key,
-                None => return Err(WsRejection::MissingWebSocketKey),
-            };
+            let sec_websocket_protocol = req
+                .headers()
+                .get(hyper::header::SEC_WEBSOCKET_PROTOCOL)
+                .cloned();
 
             let on_upgrade = req.extensions_mut().remove::<OnUpgrade>();
 
             Ok(Ws {
                 key,
+                sec_websocket_protocol,
                 config: Default::default(),
                 on_upgrade,
             })
@@ -147,45 +177,56 @@ where
     Fut: Future<Output = ()> + Send,
 {
     fn into_response(self) -> Response {
-        if let Some(on_upgrade) = self.ws.on_upgrade {
-            let on_upgrade_cb = self.on_upgrade;
-            let config = self.ws.config;
-
-            tokio::spawn(async move {
-                let ws = match on_upgrade.await {
-                    Err(e) => {
-                        log::error!("ws upgrade error: {e}");
-
-                        Err(e)
-                    }
-                    Ok(upgraded) => {
-                        log::trace!("websocket upgrade complete");
-
-                        Ok(WebSocket {
-                            inner: WebSocketStream::from_raw_socket(
-                                TokioIo::new(upgraded),
-                                protocol::Role::Server,
-                                Some(config),
-                            )
-                            .await,
-                        })
-                    }
-                };
-
-                on_upgrade_cb(ws).await;
-            });
-        } else {
+        let Some(on_upgrade) = self.ws.on_upgrade else {
             log::warn!("ws couldn't be upgraded since no upgrade state was present");
 
             return IntoResponse::into_response(StatusCode::BAD_REQUEST);
-        }
+        };
 
-        IntoResponse::into_response((
-            StatusCode::SWITCHING_PROTOCOLS,
-            Header(Connection::upgrade()),
-            Header(Upgrade::websocket()),
-            Header(SecWebsocketAccept::from(self.ws.key)),
-        ))
+        let on_upgrade_cb = self.on_upgrade;
+        let config = self.ws.config;
+
+        tokio::spawn(async move {
+            let ws = match on_upgrade.await {
+                Err(e) => {
+                    log::error!("ws upgrade error: {e}");
+
+                    Err(e)
+                }
+                Ok(upgraded) => {
+                    log::trace!("websocket upgrade complete");
+
+                    Ok(WebSocket {
+                        inner: WebSocketStream::from_raw_socket(
+                            TokioIo::new(upgraded),
+                            protocol::Role::Server,
+                            Some(config),
+                        )
+                        .await,
+                    })
+                }
+            };
+
+            on_upgrade_cb(ws).await;
+        });
+
+        match self.ws.key {
+            // HTTP/1
+            Some(key) => IntoResponse::into_response((
+                StatusCode::SWITCHING_PROTOCOLS,
+                Header(Connection::upgrade()),
+                Header(Upgrade::websocket()),
+                Header(SecWebsocketAccept::from(key)),
+                self.ws
+                    .sec_websocket_protocol
+                    .map(|p| [(hyper::header::SEC_WEBSOCKET_PROTOCOL, p)]),
+            )),
+            // HTTP/2
+            // As established in RFC 9113 section 8.5, we just respond
+            // with a 2XX with an empty body:
+            // <https://datatracker.ietf.org/doc/html/rfc9113#name-the-connect-method>.
+            None => IntoResponse::into_response(StatusCode::OK),
+        }
     }
 }
 

@@ -18,7 +18,10 @@ async fn main() {
 
     let mut server = Server::bind("127.0.0.1:8083".parse().unwrap());
 
-    server.http_builder().http1().http2().adaptive_window(true);
+    server
+        .http2()
+        .adaptive_window(true)
+        .enable_connect_protocol();
 
     _ = server
         .acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor))

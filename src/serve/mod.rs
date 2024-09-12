@@ -7,7 +7,10 @@ use futures::{FutureExt, TryFutureExt};
 use hyper::body::Incoming;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
-    server::{conn::auto::Builder, graceful::GracefulShutdown},
+    server::{
+        conn::auto::{Builder, Http1Builder, Http2Builder},
+        graceful::GracefulShutdown,
+    },
 };
 
 use std::{
@@ -213,6 +216,14 @@ impl<A> Server<A> {
         &mut self.builder
     }
 
+    pub fn http1(&mut self) -> Http1Builder<TokioExecutor> {
+        self.builder.http1()
+    }
+
+    pub fn http2(&mut self) -> Http2Builder<TokioExecutor> {
+        self.builder.http2()
+    }
+
     pub fn handle(&self) -> Handle {
         self.handle.clone()
     }
@@ -252,7 +263,7 @@ impl<A> Server<A> {
         // only acquire this once before the loop
         let mut shutdown = std::pin::pin!(handle.shutdown_notified());
 
-        'outer: loop {
+        loop {
             // accept incoming connections, with slight backoff on failure
             let accept_loop = async {
                 loop {
@@ -267,7 +278,7 @@ impl<A> Server<A> {
             let (stream, socket_addr) = tokio::select! {
                 biased;
                 res = accept_loop => res,
-                _ = &mut shutdown => break 'outer,
+                _ = &mut shutdown => break,
             };
 
             let service = make_service.make_service(socket_addr);
