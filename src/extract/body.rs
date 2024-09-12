@@ -1,6 +1,6 @@
 use std::{borrow::Cow, convert::Infallible, future::Future};
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 use http::StatusCode;
 use http_body_util::{BodyExt, BodyStream, Collected};
 
@@ -57,6 +57,33 @@ impl<S> FromRequest<S> for Bytes {
                 Ok(collected) => Ok(collected.to_bytes()),
                 Err(e) => Err(BodyRejectionError::from(e)),
             }
+        }
+    }
+}
+
+impl<S> FromRequest<S> for BytesMut {
+    type Rejection = BodyRejectionError;
+
+    fn from_request(
+        mut req: Request,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            let collected = req
+                .body_mut()
+                .take()
+                .collect()
+                .await
+                .map_err(BodyRejectionError::from)?;
+
+            let buf = collected.aggregate();
+
+            use bytes::BufMut;
+
+            let mut bytes = BytesMut::with_capacity(buf.remaining());
+            bytes.put(buf);
+
+            Ok(bytes)
         }
     }
 }
