@@ -1,10 +1,19 @@
-use std::{future::Future, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{
+    future::Future,
+    marker::PhantomData,
+    ops::Deref,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use crate::{response::IntoResponse, Request};
 
 pub trait Service<Req>: Send + Sync + 'static {
     type Response;
     type Error;
+
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>>;
 
     fn call(
         &self,
@@ -34,6 +43,11 @@ where
 {
     type Response = <<T as Deref>::Target as Service<R>>::Response;
     type Error = <<T as Deref>::Target as Service<R>>::Error;
+
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        (**self).poll_ready(cx)
+    }
 
     fn call(
         &self,
@@ -76,6 +90,11 @@ where
     type Response = S::Response;
     type Error = S::Error;
 
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
     fn call(
         &self,
         req: Req1,
@@ -90,14 +109,19 @@ impl<S, F> MapServiceRequest<S, F> {
     }
 }
 
-pub struct MapServiceHyperToFtl<S>(pub S);
+pub struct MapHyperServiceToFtlService<S>(pub S);
 
-impl<S> Service<http::Request<hyper::body::Incoming>> for MapServiceHyperToFtl<S>
+impl<S> Service<http::Request<hyper::body::Incoming>> for MapHyperServiceToFtlService<S>
 where
     S: Service<crate::Request, Error: Into<crate::error::BoxError>> + Send,
 {
     type Response = S::Response;
     type Error = S::Error;
+
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
 
     fn call(
         &self,
@@ -108,11 +132,11 @@ where
     }
 }
 
-pub struct FtlServiceToHyperMakeService<S>(Arc<MapServiceHyperToFtl<S>>);
+pub struct FtlServiceToHyperMakeService<S>(Arc<MapHyperServiceToFtlService<S>>);
 
 impl<S> FtlServiceToHyperMakeService<S> {
     pub fn new(service: S) -> Self {
-        Self(Arc::new(MapServiceHyperToFtl(service)))
+        Self(Arc::new(MapHyperServiceToFtlService(service)))
     }
 }
 
@@ -121,7 +145,7 @@ impl<S, Target> MakeService<Target, http::Request<hyper::body::Incoming>>
 where
     S: Service<crate::Request, Error: Into<crate::error::BoxError>> + Send,
 {
-    type Service = Arc<MapServiceHyperToFtl<S>>;
+    type Service = Arc<MapHyperServiceToFtlService<S>>;
 
     fn make_service(&self, _target: Target) -> Self::Service {
         self.0.clone()

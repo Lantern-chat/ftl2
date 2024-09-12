@@ -34,7 +34,7 @@ use tokio::{
 use accept::{Accept, DefaultAcceptor};
 
 use crate::{
-    error::BoxError,
+    error::{io_other, BoxError},
     response::IntoResponse,
     service::{MakeService, Service},
 };
@@ -292,6 +292,12 @@ impl<A> Server<A> {
             };
 
             let service = make_service.make_service(socket_addr);
+
+            #[cfg(feature = "tower-service")]
+            futures::future::poll_fn(|cx| service.poll_ready(cx))
+                .await
+                .map_err(io_other)?;
+
             let acceptor = acceptor.clone();
             let builder = builder.clone();
             let watcher = handle.watcher();

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
 
 use futures::FutureExt;
@@ -17,6 +18,7 @@ type InnerRouter = matchit::Router<NodeId>;
 type NodeId = u64;
 
 pub struct Route<S> {
+    state: S,
     path: Arc<str>,
     handler: BoxedErasedHandler<S>,
 }
@@ -33,7 +35,6 @@ pub struct Router<S> {
     trace: InnerRouter,
     any: InnerRouter,
     routes: HashMap<NodeId, Route<S>, rustc_hash::FxRandomState>,
-    fallback: Option<BoxedErasedHandler<S>>,
     state: S,
     counter: u64,
 }
@@ -69,10 +70,9 @@ impl<S> Router<S> {
             options: InnerRouter::new(),
             trace: InnerRouter::new(),
             any: InnerRouter::new(),
-            fallback: None,
             routes: HashMap::default(),
             state,
-            counter: 0,
+            counter: 1,
         }
     }
 
@@ -80,7 +80,7 @@ impl<S> Router<S> {
         &self,
         method: &Method,
         path: &'p str,
-    ) -> Result<matchit::Match<'_, 'p, &Route<S>>, Option<&BoxedErasedHandler<S>>> {
+    ) -> Result<matchit::Match<'_, 'p, &Route<S>>, Option<&Route<S>>> {
         let mut any = false;
 
         let router = match *method {
@@ -110,7 +110,7 @@ impl<S> Router<S> {
             Some(match_) => {
                 let handler = match self.routes.get(match_.value) {
                     Some(handler) => handler,
-                    None => return Err(self.fallback.as_ref()),
+                    None => return Err(self.routes.get(&0)),
                 };
 
                 Ok(Match {
@@ -118,8 +118,24 @@ impl<S> Router<S> {
                     params: match_.params,
                 })
             }
-            None => Err(self.fallback.as_ref()),
+            None => Err(self.routes.get(&0)),
         }
+    }
+
+    pub fn fallback<H, T>(&mut self, handler: H)
+    where
+        H: Handler<T, S> + Send + 'static,
+        S: Clone + Send + Sync + 'static,
+        T: Send + 'static,
+    {
+        self.routes.insert(
+            0,
+            Route {
+                state: self.state.clone(),
+                path: Arc::from(""),
+                handler: BoxedErasedHandler::erase(handler),
+            },
+        );
     }
 
     /// Routes specific to WebSocket connections.
@@ -147,6 +163,7 @@ impl<S> Router<S> {
         self.routes.insert(
             id,
             Route {
+                state: self.state.clone(),
                 path: Arc::from(path.as_ref()),
                 handler: BoxedErasedHandler::erase(handler),
             },
@@ -207,13 +224,20 @@ where
     type Response = Response;
     type Error = Infallible;
 
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(())) // TODO: check if all routes are ready? Especially if they're layered with services.
+    }
+
     fn call(
         &self,
         req: Request,
     ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+        use futures::future::Either;
+
         let (mut parts, body) = req.into_parts();
 
-        let handler = match self.match_route(&parts.method, parts.uri.path()) {
+        let route = match self.match_route(&parts.method, parts.uri.path()) {
             Ok(match_) => {
                 crate::params::insert_url_params(&mut parts.extensions, match_.params);
 
@@ -221,22 +245,64 @@ where
                     .extensions
                     .insert(crate::extract::MatchedPath(match_.value.path.clone()));
 
-                &match_.value.handler
+                match_.value
             }
             Err(Some(fallback)) => fallback,
-            // NotFound is a ZST, so it won't allocate when boxed
-            Err(None) => return NotFound.boxed().map(cleanup_body(MiniMethod::Other)),
+            Err(None) => return Either::Right(NotFound),
         };
 
-        let mini_method = match parts.method {
+        Either::Left(route.call(Request::from_parts(parts, body)))
+    }
+}
+
+impl<S> Service<Request> for Route<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    type Response = Response;
+    type Error = Infallible;
+
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(
+        &self,
+        req: Request,
+    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+        let method = match *req.method() {
             Method::HEAD => MiniMethod::Head,
             Method::CONNECT => MiniMethod::Connect,
             _ => MiniMethod::Other,
         };
 
-        handler
-            .call(Request::from_parts(parts, body), self.state.clone())
-            .map(cleanup_body(mini_method))
+        self.handler
+            .call(req, self.state.clone())
+            .map(move |mut resp| {
+                if method == MiniMethod::Connect && resp.status().is_success() {
+                    // From https://httpwg.org/specs/rfc9110.html#CONNECT:
+                    // > A server MUST NOT send any Transfer-Encoding or
+                    // > Content-Length header fields in a 2xx (Successful)
+                    // > response to CONNECT.
+                    if resp.headers().contains_key(header::CONTENT_LENGTH)
+                        || resp.headers().contains_key(header::TRANSFER_ENCODING)
+                        || resp.size_hint().lower() != 0
+                    {
+                        log::error!("response to CONNECT with nonempty body");
+                        resp = resp.map(|_| Body::empty());
+                    }
+                } else {
+                    // make sure to set content-length before removing the body
+                    set_content_length(resp.size_hint(), resp.headers_mut());
+                }
+
+                if method == MiniMethod::Head {
+                    resp = resp.map(|_| Body::empty());
+                }
+
+                Ok(resp)
+            })
     }
 }
 
@@ -245,34 +311,6 @@ enum MiniMethod {
     Head,
     Connect,
     Other,
-}
-
-#[inline]
-fn cleanup_body(method: MiniMethod) -> impl FnOnce(Response) -> Result<Response, Infallible> {
-    move |mut resp| {
-        if method == MiniMethod::Connect && resp.status().is_success() {
-            // From https://httpwg.org/specs/rfc9110.html#CONNECT:
-            // > A server MUST NOT send any Transfer-Encoding or
-            // > Content-Length header fields in a 2xx (Successful)
-            // > response to CONNECT.
-            if resp.headers().contains_key(header::CONTENT_LENGTH)
-                || resp.headers().contains_key(header::TRANSFER_ENCODING)
-                || resp.size_hint().lower() != 0
-            {
-                log::error!("response to CONNECT with nonempty body");
-                resp = resp.map(|_| Body::empty());
-            }
-        } else {
-            // make sure to set content-length before removing the body
-            set_content_length(resp.size_hint(), resp.headers_mut());
-        }
-
-        if method == MiniMethod::Head {
-            resp = resp.map(|_| Body::empty());
-        }
-
-        Ok(resp)
-    }
 }
 
 fn set_content_length(size_hint: http_body::SizeHint, headers: &mut HeaderMap) {
@@ -301,9 +339,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 impl Future for NotFound {
-    type Output = Response;
+    type Output = Result<Response, Infallible>;
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Ready(StatusCode::NOT_FOUND.into_response())
+        Poll::Ready(Ok(StatusCode::NOT_FOUND.into_response()))
     }
 }
