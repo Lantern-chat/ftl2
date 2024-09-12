@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use futures::FutureExt;
-use http::{Method, StatusCode};
+use http::header;
+use http::{HeaderMap, HeaderValue, Method, StatusCode};
+use http_body::Body as _;
 use matchit::Match;
 
+use crate::body::Body;
 use crate::handler::{BoxedErasedHandler, Handler};
 
 type InnerRouter = matchit::Router<NodeId>;
@@ -36,24 +39,19 @@ pub struct Router<S> {
 }
 
 macro_rules! impl_add_route {
-    ($($method:ident,)*) => {$(
+    ($($method:ident => $upper:ident,)*) => {$(
         pub fn $method<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
         where
             H: Handler<T, S> + Send + 'static,
             T: Send + 'static,
             S: Clone + Send + Sync + 'static,
-            P: AsRef<str> + Into<String>,
+            P: AsRef<str>,
         {
-            assert!(path.as_ref().starts_with("/"), "path must start with /");
-
-            let id = self.counter;
-            self.counter += 1;
-            self.routes.insert(id, Route {
-                path: Arc::from(path.as_ref()),
-                handler: BoxedErasedHandler::erase(handler),
-            });
-            self.$method.insert(path, id).unwrap();
-            self
+            self.on(
+                &[Method::$upper],
+                path,
+                handler,
+            )
         }
     )*};
 }
@@ -124,17 +122,78 @@ impl<S> Router<S> {
         }
     }
 
+    /// Routes specific to WebSocket connections.
+    pub fn ws<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
+    where
+        H: Handler<T, S> + Send + 'static,
+        T: Send + 'static,
+        S: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        self.on(&[Method::GET, Method::CONNECT], path, handler)
+    }
+
+    pub fn on<P, H, T>(&mut self, methods: impl AsRef<[Method]>, path: P, handler: H) -> &mut Self
+    where
+        H: Handler<T, S> + Send + 'static,
+        T: Send + 'static,
+        S: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        assert!(path.as_ref().starts_with("/"), "path must start with /");
+
+        let id = self.counter;
+        self.counter += 1;
+        self.routes.insert(
+            id,
+            Route {
+                path: Arc::from(path.as_ref()),
+                handler: BoxedErasedHandler::erase(handler),
+            },
+        );
+
+        for method in methods.as_ref() {
+            let router = match *method {
+                Method::GET => &mut self.get,
+                Method::POST => &mut self.post,
+                Method::PUT => &mut self.put,
+                Method::DELETE => &mut self.delete,
+                Method::PATCH => &mut self.patch,
+                Method::HEAD => &mut self.head,
+                Method::CONNECT => &mut self.connect,
+                Method::OPTIONS => &mut self.options,
+                Method::TRACE => &mut self.trace,
+                _ => &mut self.any,
+            };
+
+            router.insert(path.as_ref(), id).unwrap();
+        }
+
+        self
+    }
+
     impl_add_route! {
-        get,
-        post,
-        put,
-        delete,
-        patch,
-        head,
-        connect,
-        options,
-        trace,
-        any,
+        get => GET,
+        post => POST,
+        put => PUT,
+        delete => DELETE,
+        patch => PATCH,
+        head => HEAD,
+        connect => CONNECT,
+        options => OPTIONS,
+        trace => TRACE,
+    }
+
+    pub fn any<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
+    where
+        H: Handler<T, S> + Send + 'static,
+        T: Send + 'static,
+        S: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        static ANY_METHOD: LazyLock<Method> = LazyLock::new(|| Method::from_bytes(b"ANY").unwrap());
+
+        self.on(&[ANY_METHOD.clone()], path, handler)
     }
 }
 
@@ -154,6 +213,12 @@ where
     ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
         let (mut parts, body) = req.into_parts();
 
+        let mini_method = match parts.method {
+            Method::HEAD => MiniMethod::Head,
+            Method::CONNECT => MiniMethod::Connect,
+            _ => MiniMethod::Other,
+        };
+
         let handler = match self.match_route(&parts.method, parts.uri.path()) {
             Ok(match_) => {
                 crate::params::insert_url_params(&mut parts.extensions, match_.params);
@@ -166,11 +231,68 @@ where
             }
             Err(Some(fallback)) => fallback,
             // NotFound is a ZST, so it won't allocate when boxed
-            Err(None) => return NotFound.boxed().map(Ok),
+            Err(None) => return NotFound.boxed().map(cleanup_body(MiniMethod::Other)),
         };
 
         let req = Request::from_parts(parts, body);
-        handler.call(req, self.state.clone()).map(Ok)
+        handler
+            .call(req, self.state.clone())
+            .map(cleanup_body(mini_method))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MiniMethod {
+    Head,
+    Connect,
+    Other,
+}
+
+#[inline]
+fn cleanup_body(method: MiniMethod) -> impl FnOnce(Response) -> Result<Response, Infallible> {
+    move |mut resp| {
+        if method == MiniMethod::Connect && resp.status().is_success() {
+            // From https://httpwg.org/specs/rfc9110.html#CONNECT:
+            // > A server MUST NOT send any Transfer-Encoding or
+            // > Content-Length header fields in a 2xx (Successful)
+            // > response to CONNECT.
+            if resp.headers().contains_key(header::CONTENT_LENGTH)
+                || resp.headers().contains_key(header::TRANSFER_ENCODING)
+                || resp.size_hint().lower() != 0
+            {
+                log::error!("response to CONNECT with nonempty body");
+                resp = resp.map(|_| Body::empty());
+            }
+        } else {
+            // make sure to set content-length before removing the body
+            set_content_length(resp.size_hint(), resp.headers_mut());
+        }
+
+        if method == MiniMethod::Head {
+            resp = resp.map(|_| Body::empty());
+        }
+
+        Ok(resp)
+    }
+}
+
+fn set_content_length(size_hint: http_body::SizeHint, headers: &mut HeaderMap) {
+    if headers.contains_key(header::CONTENT_LENGTH) {
+        return;
+    }
+
+    if let Some(size) = size_hint.exact() {
+        let header_value = if size == 0 {
+            #[allow(clippy::declare_interior_mutable_const)]
+            const ZERO: HeaderValue = HeaderValue::from_static("0");
+
+            ZERO
+        } else {
+            let mut buffer = itoa::Buffer::new();
+            HeaderValue::from_str(buffer.format(size)).unwrap()
+        };
+
+        headers.insert(header::CONTENT_LENGTH, header_value);
     }
 }
 
