@@ -88,7 +88,7 @@ impl Drop for Watcher {
     fn drop(&mut self) {
         let count = self.inner().conn_count.fetch_sub(1, Ordering::SeqCst);
 
-        if count == 0 && self.inner().shutdown.is_notified() {
+        if count == 1 && self.inner().shutdown.is_notified() {
             self.inner().kill.notify_waiters();
         }
     }
@@ -145,8 +145,8 @@ impl Handle {
 
         tokio::select! {
             biased;
-            _ = tokio::time::sleep(deadline) => self.kill(),
             _ = self.kill_notified() => {},
+            _ = tokio::time::sleep(deadline) => self.kill(),
         }
     }
 }
