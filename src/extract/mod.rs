@@ -1,7 +1,10 @@
 use core::future::Future;
-use std::{convert::Infallible, sync::Arc};
+use std::{convert::Infallible, str::FromStr as _, sync::Arc};
 
-use http::{request::Parts, Extensions, HeaderMap, Method, StatusCode, Uri, Version};
+use http::{
+    request::Parts, uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri,
+    Version,
+};
 
 use crate::{IntoResponse, Request, Response};
 
@@ -261,6 +264,53 @@ impl<S> FromRequestParts<S> for Uri {
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.uri.clone())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuthorityRejection {
+    #[error("missing authority")]
+    MissingAuthority,
+    #[error("invalid authority")]
+    InvalidAuthority,
+}
+
+impl IntoResponse for AuthorityRejection {
+    fn into_response(self) -> Response {
+        IntoResponse::into_response(match self {
+            AuthorityRejection::MissingAuthority => ("missing authority", StatusCode::BAD_REQUEST),
+            AuthorityRejection::InvalidAuthority => ("invalid authority", StatusCode::BAD_REQUEST),
+        })
+    }
+}
+
+impl<S> FromRequestParts<S> for Authority {
+    type Rejection = AuthorityRejection;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        let from_uri = parts.uri.authority();
+
+        let from_header = parts
+            .headers
+            .get(HeaderName::from_static("host"))
+            .ok_or(AuthorityRejection::MissingAuthority)
+            .and_then(|hdr| {
+                Authority::from_str(
+                    hdr.to_str()
+                        .map_err(|_| AuthorityRejection::InvalidAuthority)?,
+                )
+                .map_err(|_| AuthorityRejection::InvalidAuthority)
+            });
+
+        futures::future::ready(match (from_uri, from_header) {
+            (Some(_), Ok(b)) => Ok(b), // defer to HOST as what the client intended
+            (Some(a), Err(_)) => Ok(a.clone()), // HOST is invalid, but URI is valid
+            (None, Ok(b)) => Ok(b),
+            (None, Err(e)) => Err(e),
+        })
     }
 }
 
