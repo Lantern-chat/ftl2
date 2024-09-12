@@ -113,6 +113,16 @@ impl Handle {
         self.0.kill.notify_waiters();
     }
 
+    pub fn shutdown_on<F>(self, signal: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        tokio::spawn(async move {
+            signal.await;
+            self.shutdown();
+        });
+    }
+
     fn shutdown_notified(&self) -> impl Future<Output = ()> + '_ {
         self.0.shutdown.notified()
     }
