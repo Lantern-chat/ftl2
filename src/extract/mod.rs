@@ -65,6 +65,7 @@ where
 
 pub mod body;
 pub mod path;
+pub mod real_ip;
 
 pub use body::{CollectedBytes, Limited};
 pub use path::Path;
