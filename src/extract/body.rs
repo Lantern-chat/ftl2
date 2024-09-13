@@ -141,6 +141,11 @@ pub enum StringRejectionError {
 
 fn body_error_to_response(err: BodyError) -> Response {
     IntoResponse::into_response(match err {
+        BodyError::Generic(e) => (
+            format!("An error occurred while reading the body: {e}").into(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+
         BodyError::StreamAborted => (
             Cow::Borrowed("The body stream was aborted"),
             StatusCode::UNPROCESSABLE_ENTITY,

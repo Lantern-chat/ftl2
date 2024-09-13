@@ -1,9 +1,14 @@
 use ftl::{
+    body::ConvertAnyBody,
     extract::{Extension, MatchedPath},
     router::Router,
-    serve::tls_rustls::{RustlsAcceptor, RustlsConfig},
-    serve::{accept::NoDelayAcceptor, Server},
+    serve::{
+        accept::NoDelayAcceptor,
+        tls_rustls::{RustlsAcceptor, RustlsConfig},
+        Server,
+    },
     service::FtlServiceToHyperMakeService,
+    Layer,
 };
 
 use ftl::extract::real_ip::{RealIp, RealIpLayer};
@@ -12,6 +17,8 @@ use tokio::signal::ctrl_c;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     // load tls config from pem files
     let tls_config = RustlsConfig::from_pem_file("cert.pem", "key.pem")
         .await
@@ -38,10 +45,15 @@ async fn main() {
         .adaptive_window(true)
         .enable_connect_protocol(); // used for HTTP/2 Websockets
 
+    let service = router.layer(RealIpLayer);
+
     // serve the router service with the server
     _ = server
         .acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor))
-        .serve(FtlServiceToHyperMakeService::new(router.layer(RealIpLayer)))
+        .serve(FtlServiceToHyperMakeService::new(
+            // Convert the `Incoming` body to FTL Body type and call the service
+            ConvertAnyBody(()).layer(service),
+        ))
         .await;
 }
 
@@ -49,6 +61,7 @@ async fn placeholder(
     Extension(p): Extension<MatchedPath>,
     uri: http::Uri,
     Extension(real_ip): Extension<RealIp>,
+    body: ftl::body::Body,
 ) -> String {
     format!("Matched: {}: {} from {}", p.0, uri.path(), real_ip)
 }

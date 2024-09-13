@@ -1,5 +1,9 @@
 use std::{
+    any::TypeId,
+    error::Error,
+    mem::ManuallyDrop,
     pin::Pin,
+    sync::Once,
     task::{Context, Poll},
 };
 
@@ -9,6 +13,92 @@ use tokio::sync::mpsc;
 
 use http_body_util::{Full, StreamBody};
 use tokio_stream::wrappers::ReceiverStream;
+use tower_layer::Layer;
+
+use crate::{Request, Service};
+
+pub struct ConvertAnyBody<S>(pub S);
+pub struct ConvertIncoming<S>(pub S);
+
+impl<S> Layer<S> for ConvertAnyBody<()> {
+    type Service = ConvertAnyBody<S>;
+
+    fn layer(&self, service: S) -> Self::Service {
+        ConvertAnyBody(service)
+    }
+}
+
+impl<S> Layer<S> for ConvertIncoming<()> {
+    type Service = ConvertIncoming<S>;
+
+    fn layer(&self, service: S) -> Self::Service {
+        ConvertIncoming(service)
+    }
+}
+
+impl<S, B> Service<http::Request<B>> for ConvertAnyBody<S>
+where
+    S: Service<Request>,
+    B: http_body::Body<Data = Bytes, Error: Error + Send + Sync + 'static> + Send + 'static,
+{
+    type Error = S::Error;
+    type Response = S::Response;
+
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(
+        &self,
+        req: http::Request<B>,
+    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + 'static
+    {
+        use http_body_util::BodyExt;
+
+        let (parts, body) = req.into_parts();
+
+        // we can more efficiently handle hyper::body::Incoming, so do some shinanigans
+        let body = if TypeId::of::<B>() == TypeId::of::<hyper::body::Incoming>() {
+            static WARNING: Once = Once::new();
+
+            WARNING.call_once(|| log::warn!("Warning: ConvertAnyBody called with hyper::body::Incoming, consider using ConvertIncoming instead"));
+
+            // SAFETY: we know the type is hyper::body::Incoming, this is effectively a transmute
+            Body::from(unsafe {
+                let body = ManuallyDrop::new(body);
+                std::ptr::read::<hyper::body::Incoming>(&body as *const _ as *const _)
+            })
+        } else {
+            Body::wrap(body.map_err(|e| BodyError::Generic(Box::new(e))))
+        };
+
+        self.0.call(http::Request::from_parts(parts, body))
+    }
+}
+
+impl<S> Service<http::Request<hyper::body::Incoming>> for ConvertIncoming<S>
+where
+    S: Service<Request>,
+{
+    type Error = S::Error;
+    type Response = S::Response;
+
+    #[cfg(feature = "tower-service")]
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(
+        &self,
+        req: http::Request<hyper::body::Incoming>,
+    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + 'static
+    {
+        let (parts, body) = req.into_parts();
+        self.0
+            .call(http::Request::from_parts(parts, Body::from(body)))
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
@@ -20,9 +110,13 @@ pub enum BodyError {
 
     #[error(transparent)]
     LengthLimitError(#[from] http_body_util::LengthLimitError),
+
+    #[error(transparent)]
+    Generic(Box<dyn Error + Send + Sync + 'static>),
 }
 
 #[derive(Default)]
+#[repr(transparent)]
 pub struct Body(BodyInner);
 
 #[derive(Default)]

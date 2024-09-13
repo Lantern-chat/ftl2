@@ -53,3 +53,4 @@ tower-service = ["dep:tower-service"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+tracing-subscriber = "0.3.18"

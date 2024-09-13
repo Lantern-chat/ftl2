@@ -3,6 +3,8 @@ pub mod tls_rustls;
 
 pub mod accept;
 
+use core::error::Error;
+
 use futures::{FutureExt, TryFutureExt};
 use hyper::body::Incoming;
 use hyper_util::{
@@ -240,7 +242,7 @@ impl<A> Server<A> {
 }
 
 impl<A> Server<A> {
-    pub async fn serve<M>(self, make_service: M) -> io::Result<()>
+    pub async fn serve<M, B>(self, make_service: M) -> io::Result<()>
     where
         // M "creates" a service under the given client address
         M: MakeService<SocketAddr, http::Request<Incoming>>,
@@ -248,9 +250,11 @@ impl<A> Server<A> {
         // The acceptor maps `M::Service` to its own service type.
         A::Service: Service<
             http::Request<Incoming>,
-            Response: IntoResponse,
-            Error: core::error::Error + Send + Sync + 'static,
+            Response = http::Response<B>,
+            Error: Error + Send + Sync + 'static,
         >,
+        // Body requirements
+        B: http_body::Body<Data: Send, Error: Error + Send + Sync + 'static> + Send + 'static,
     {
         let Self {
             acceptor,
@@ -312,19 +316,12 @@ impl<A> Server<A> {
                     hyper::service::service_fn(|mut req| {
                         req.extensions_mut().insert(socket_addr);
 
-                        service.call(req).map(|res| match res {
-                            Ok(resp) => Ok(resp.into_response()),
-                            Err(e) => Err(e),
-                        })
+                        service.call(req)
                     }),
                 ));
 
                 tokio::select! {
                     biased;
-                    res = &mut conn => match res {
-                        Ok(_) => {}
-                        Err(e) => log::error!("server connection error: {}", e),
-                    },
                     _ = watcher.0.shutdown_notified() => {
                         conn.as_mut().graceful_shutdown();
 
@@ -334,6 +331,7 @@ impl<A> Server<A> {
                             _ = watcher.0.kill_notified() => {},
                         }
                     }
+                    _ = &mut conn => {},
                 }
             });
         }

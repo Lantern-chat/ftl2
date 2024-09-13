@@ -6,7 +6,7 @@ use http::{
     Version,
 };
 
-use crate::{IntoResponse, Request, Response};
+use crate::{body::Body, IntoResponse, Request, Response};
 
 pub trait FromRequestParts<S>: Sized {
     type Rejection: IntoResponse;
@@ -42,6 +42,17 @@ impl<S> FromRequest<S> for Request {
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(req)
+    }
+}
+
+impl<S> FromRequest<S> for Body {
+    type Rejection = Infallible;
+
+    fn from_request(
+        req: Request,
+        _state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(req.into_body())
     }
 }
 

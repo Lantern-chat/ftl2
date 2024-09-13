@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     future::Future,
     marker::PhantomData,
     ops::Deref,
@@ -109,45 +110,27 @@ impl<S, F> MapServiceRequest<S, F> {
     }
 }
 
-pub struct MapHyperServiceToFtlService<S>(pub S);
-
-impl<S> Service<http::Request<hyper::body::Incoming>> for MapHyperServiceToFtlService<S>
-where
-    S: Service<crate::Request, Error: Into<crate::error::BoxError>> + Send,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(
-        &self,
-        req: http::Request<hyper::body::Incoming>,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
-        let (parts, body) = req.into_parts();
-        self.0.call(Request::from_parts(parts, body.into()))
-    }
-}
-
 #[derive(Clone)]
 #[repr(transparent)]
-pub struct FtlServiceToHyperMakeService<S>(Arc<MapHyperServiceToFtlService<S>>);
+pub struct FtlServiceToHyperMakeService<S>(Arc<S>)
+where
+    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send;
 
-impl<S> FtlServiceToHyperMakeService<S> {
+impl<S> FtlServiceToHyperMakeService<S>
+where
+    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send,
+{
     pub fn new(service: S) -> Self {
-        Self(Arc::new(MapHyperServiceToFtlService(service)))
+        Self(Arc::new(service))
     }
 }
 
 impl<S, Target> MakeService<Target, http::Request<hyper::body::Incoming>>
     for FtlServiceToHyperMakeService<S>
 where
-    S: Service<crate::Request, Error: Into<crate::error::BoxError>> + Send,
+    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send,
 {
-    type Service = Arc<MapHyperServiceToFtlService<S>>;
+    type Service = Arc<S>;
 
     fn make_service(&self, _target: Target) -> Self::Service {
         self.0.clone()
