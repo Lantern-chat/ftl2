@@ -6,6 +6,8 @@ use ftl::{
     service::FtlServiceToHyperMakeService,
 };
 
+use ftl::extract::real_ip::{RealIp, RealIpLayer};
+
 use tokio::signal::ctrl_c;
 
 #[tokio::main]
@@ -19,10 +21,13 @@ async fn main() {
     let mut router = Router::with_state(());
 
     // setup routes
-    router.get("/{*path}", placeholder).get("/", placeholder);
+    router
+        .get("/{*path}", placeholder)
+        .get("/", placeholder)
+        .get("/hello", placeholder);
 
     // create server to bind at localhost:8083, under https
-    let mut server = Server::bind("127.0.0.1:8083".parse().unwrap());
+    let mut server = Server::bind("0.0.0.0:8083".parse().unwrap());
 
     // setup graceful shutdown on ctrl-c
     server.handle().shutdown_on(async { _ = ctrl_c().await });
@@ -36,10 +41,14 @@ async fn main() {
     // serve the router service with the server
     _ = server
         .acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor))
-        .serve(FtlServiceToHyperMakeService::new(router))
+        .serve(FtlServiceToHyperMakeService::new(router.layer(RealIpLayer)))
         .await;
 }
 
-async fn placeholder(Extension(p): Extension<MatchedPath>, uri: http::Uri) -> String {
-    format!("Matched: {}: {}", p.0, uri.path())
+async fn placeholder(
+    Extension(p): Extension<MatchedPath>,
+    uri: http::Uri,
+    Extension(real_ip): Extension<RealIp>,
+) -> String {
+    format!("Matched: {}: {} from {}", p.0, uri.path(), real_ip)
 }

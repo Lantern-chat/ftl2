@@ -132,6 +132,8 @@ where
     }
 }
 
+#[derive(Clone)]
+#[repr(transparent)]
 pub struct FtlServiceToHyperMakeService<S>(Arc<MapHyperServiceToFtlService<S>>);
 
 impl<S> FtlServiceToHyperMakeService<S> {
