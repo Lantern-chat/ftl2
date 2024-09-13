@@ -10,6 +10,8 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode};
 use http_body::Body as _;
 use matchit::Match;
 
+use tower_layer::Layer;
+
 use crate::body::Body;
 use crate::handler::{BoxedErasedHandler, Handler};
 
@@ -17,13 +19,29 @@ type InnerRouter = matchit::Router<NodeId>;
 
 type NodeId = u64;
 
-pub struct Route<S> {
-    state: S,
-    path: Arc<str>,
-    handler: BoxedErasedHandler<S>,
+pub struct HandlerService<STATE> {
+    state: STATE,
+    handler: BoxedErasedHandler<STATE>,
 }
 
-pub struct Router<S> {
+pub struct Route<SERVICE> {
+    path: Arc<str>,
+    service: SERVICE,
+}
+
+impl<S> Route<S> {
+    fn wrap<L>(self, layer: &L) -> Route<L::Service>
+    where
+        L: Layer<S>,
+    {
+        Route {
+            path: self.path,
+            service: layer.layer(self.service),
+        }
+    }
+}
+
+pub struct Router<STATE, SERVICE = HandlerService<STATE>> {
     get: InnerRouter,
     post: InnerRouter,
     put: InnerRouter,
@@ -34,8 +52,8 @@ pub struct Router<S> {
     options: InnerRouter,
     trace: InnerRouter,
     any: InnerRouter,
-    routes: HashMap<NodeId, Route<S>, rustc_hash::FxRandomState>,
-    state: S,
+    routes: HashMap<NodeId, Route<SERVICE>, rustc_hash::FxRandomState>,
+    state: STATE,
     counter: u64,
 }
 
@@ -43,9 +61,9 @@ macro_rules! impl_add_route {
     ($($method:ident => $upper:ident,)*) => {$(
         pub fn $method<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
         where
-            H: Handler<T, S> + Send + 'static,
+            H: Handler<T, STATE> + Send + 'static,
             T: Send + 'static,
-            S: Clone + Send + Sync + 'static,
+            STATE: Clone + Send + Sync + 'static,
             P: AsRef<str>,
         {
             self.on(
@@ -57,8 +75,8 @@ macro_rules! impl_add_route {
     )*};
 }
 
-impl<S> Router<S> {
-    pub fn with_state(state: S) -> Self {
+impl<STATE> Router<STATE> {
+    pub fn with_state(state: STATE) -> Self {
         Router {
             get: InnerRouter::new(),
             post: InnerRouter::new(),
@@ -76,11 +94,134 @@ impl<S> Router<S> {
         }
     }
 
+    pub fn fallback<H, T>(&mut self, handler: H)
+    where
+        H: Handler<T, STATE> + Send + 'static,
+        STATE: Clone + Send + Sync + 'static,
+        T: Send + 'static,
+    {
+        self.routes.insert(
+            0,
+            Route {
+                path: Arc::from(""),
+                service: HandlerService {
+                    state: self.state.clone(),
+                    handler: BoxedErasedHandler::erase(handler),
+                },
+            },
+        );
+    }
+
+    /// Routes specific to WebSocket connections.
+    pub fn ws<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
+    where
+        H: Handler<T, STATE> + Send + 'static,
+        T: Send + 'static,
+        STATE: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        self.on(&[Method::GET, Method::CONNECT], path, handler)
+    }
+
+    pub fn on<P, H, T>(&mut self, methods: impl AsRef<[Method]>, path: P, handler: H) -> &mut Self
+    where
+        H: Handler<T, STATE> + Send + 'static,
+        T: Send + 'static,
+        STATE: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        assert!(path.as_ref().starts_with("/"), "path must start with /");
+
+        let id = self.counter;
+        self.counter += 1;
+        self.routes.insert(
+            id,
+            Route {
+                path: Arc::from(path.as_ref()),
+                service: HandlerService {
+                    state: self.state.clone(),
+                    handler: BoxedErasedHandler::erase(handler),
+                },
+            },
+        );
+
+        for method in methods.as_ref() {
+            let router = match *method {
+                Method::GET => &mut self.get,
+                Method::POST => &mut self.post,
+                Method::PUT => &mut self.put,
+                Method::DELETE => &mut self.delete,
+                Method::PATCH => &mut self.patch,
+                Method::HEAD => &mut self.head,
+                Method::CONNECT => &mut self.connect,
+                Method::OPTIONS => &mut self.options,
+                Method::TRACE => &mut self.trace,
+                _ => &mut self.any,
+            };
+
+            router.insert(path.as_ref(), id).unwrap();
+        }
+
+        self
+    }
+
+    impl_add_route! {
+        get => GET,
+        post => POST,
+        put => PUT,
+        delete => DELETE,
+        patch => PATCH,
+        head => HEAD,
+        connect => CONNECT,
+        options => OPTIONS,
+        trace => TRACE,
+    }
+
+    pub fn any<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
+    where
+        H: Handler<T, STATE> + Send + 'static,
+        T: Send + 'static,
+        STATE: Clone + Send + Sync + 'static,
+        P: AsRef<str>,
+    {
+        static ANY_METHOD: LazyLock<Method> = LazyLock::new(|| Method::from_bytes(b"ANY").unwrap());
+
+        self.on(&[ANY_METHOD.clone()], path, handler)
+    }
+}
+
+impl<STATE, SERVICE> Router<STATE, SERVICE> {
+    pub fn layer<L>(self, layer: L) -> Router<STATE, L::Service>
+    where
+        L: Layer<SERVICE>,
+    {
+        Router {
+            routes: self
+                .routes
+                .into_iter()
+                .map(|(id, route)| (id, route.wrap(&layer)))
+                .collect(),
+
+            get: self.get,
+            post: self.post,
+            put: self.put,
+            delete: self.delete,
+            patch: self.patch,
+            head: self.head,
+            connect: self.connect,
+            options: self.options,
+            trace: self.trace,
+            any: self.any,
+            state: self.state,
+            counter: self.counter,
+        }
+    }
+
     pub(crate) fn match_route<'p>(
         &self,
         method: &Method,
         path: &'p str,
-    ) -> Result<matchit::Match<'_, 'p, &Route<S>>, Option<&Route<S>>> {
+    ) -> Result<matchit::Match<'_, 'p, &Route<SERVICE>>, Option<&Route<SERVICE>>> {
         let mut any = false;
 
         let router = match *method {
@@ -121,112 +262,23 @@ impl<S> Router<S> {
             None => Err(self.routes.get(&0)),
         }
     }
-
-    pub fn fallback<H, T>(&mut self, handler: H)
-    where
-        H: Handler<T, S> + Send + 'static,
-        S: Clone + Send + Sync + 'static,
-        T: Send + 'static,
-    {
-        self.routes.insert(
-            0,
-            Route {
-                state: self.state.clone(),
-                path: Arc::from(""),
-                handler: BoxedErasedHandler::erase(handler),
-            },
-        );
-    }
-
-    /// Routes specific to WebSocket connections.
-    pub fn ws<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
-    where
-        H: Handler<T, S> + Send + 'static,
-        T: Send + 'static,
-        S: Clone + Send + Sync + 'static,
-        P: AsRef<str>,
-    {
-        self.on(&[Method::GET, Method::CONNECT], path, handler)
-    }
-
-    pub fn on<P, H, T>(&mut self, methods: impl AsRef<[Method]>, path: P, handler: H) -> &mut Self
-    where
-        H: Handler<T, S> + Send + 'static,
-        T: Send + 'static,
-        S: Clone + Send + Sync + 'static,
-        P: AsRef<str>,
-    {
-        assert!(path.as_ref().starts_with("/"), "path must start with /");
-
-        let id = self.counter;
-        self.counter += 1;
-        self.routes.insert(
-            id,
-            Route {
-                state: self.state.clone(),
-                path: Arc::from(path.as_ref()),
-                handler: BoxedErasedHandler::erase(handler),
-            },
-        );
-
-        for method in methods.as_ref() {
-            let router = match *method {
-                Method::GET => &mut self.get,
-                Method::POST => &mut self.post,
-                Method::PUT => &mut self.put,
-                Method::DELETE => &mut self.delete,
-                Method::PATCH => &mut self.patch,
-                Method::HEAD => &mut self.head,
-                Method::CONNECT => &mut self.connect,
-                Method::OPTIONS => &mut self.options,
-                Method::TRACE => &mut self.trace,
-                _ => &mut self.any,
-            };
-
-            router.insert(path.as_ref(), id).unwrap();
-        }
-
-        self
-    }
-
-    impl_add_route! {
-        get => GET,
-        post => POST,
-        put => PUT,
-        delete => DELETE,
-        patch => PATCH,
-        head => HEAD,
-        connect => CONNECT,
-        options => OPTIONS,
-        trace => TRACE,
-    }
-
-    pub fn any<P, H, T>(&mut self, path: P, handler: H) -> &mut Self
-    where
-        H: Handler<T, S> + Send + 'static,
-        T: Send + 'static,
-        S: Clone + Send + Sync + 'static,
-        P: AsRef<str>,
-    {
-        static ANY_METHOD: LazyLock<Method> = LazyLock::new(|| Method::from_bytes(b"ANY").unwrap());
-
-        self.on(&[ANY_METHOD.clone()], path, handler)
-    }
 }
 
 use crate::response::IntoResponse;
 use crate::{service::Service, Request, Response};
 
-impl<S> Service<Request> for Router<S>
+impl<STATE, SERVICE> Service<Request> for Router<STATE, SERVICE>
 where
-    S: Clone + Send + Sync + 'static,
+    STATE: Clone + Send + Sync + 'static,
+    SERVICE: Service<Request, Response = Response, Error = Infallible> + 'static,
 {
     type Response = Response;
     type Error = Infallible;
 
     #[cfg(feature = "tower-service")]
     fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(())) // TODO: check if all routes are ready? Especially if they're layered with services.
+        // TODO: check if all routes are ready? Especially if they're layered with services.
+        Poll::Ready(Ok(()))
     }
 
     fn call(
@@ -251,13 +303,13 @@ where
             Err(None) => return Either::Right(NotFound),
         };
 
-        Either::Left(route.call(Request::from_parts(parts, body)))
+        Either::Left(route.service.call(Request::from_parts(parts, body)))
     }
 }
 
-impl<S> Service<Request> for Route<S>
+impl<STATE> Service<Request> for HandlerService<STATE>
 where
-    S: Clone + Send + Sync + 'static,
+    STATE: Clone + Send + Sync + 'static,
 {
     type Response = Response;
     type Error = Infallible;

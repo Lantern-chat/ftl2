@@ -23,8 +23,10 @@ pub mod ws;
 pub type Request = http::Request<body::Body>;
 pub type Response = http::Response<body::Body>;
 
-use crate::extract::FromRequest;
-use crate::response::IntoResponse;
+pub use crate::extract::FromRequest;
+pub use crate::response::IntoResponse;
+pub use crate::service::Service;
+pub use tower_layer::Layer;
 
 #[cfg(feature = "tower-service")]
 pub mod tower;
