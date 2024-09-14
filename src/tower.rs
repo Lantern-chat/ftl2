@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     future::Future,
     marker::PhantomData,
     pin::Pin,
@@ -6,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::service::Service as FtlService;
+use crate::service::{Service as FtlService, ServiceFuture};
 use crate::Request;
 use futures::FutureExt;
 use tower_layer::Layer;
@@ -18,14 +19,12 @@ use tower_service::Service as TowerService;
 /// This is accomplished by wrapping it in a [`Mutex`] to use
 /// the `&mut self` methods of [`tower::Service`](tower_service::Service).
 pub struct TowerServiceOrFtlService<S> {
-    pub inner: Mutex<S>,
+    pub inner: S,
 }
 
 impl<S> TowerServiceOrFtlService<S> {
     pub const fn new(inner: S) -> Self {
-        Self {
-            inner: Mutex::new(inner),
-        }
+        Self { inner }
     }
 }
 
@@ -35,21 +34,23 @@ pub struct TowerLayer<L>(pub L);
 
 impl<S> FtlService<Request> for TowerServiceOrFtlService<S>
 where
-    S: TowerService<Request, Future: Send + 'static> + Send + 'static,
+    S: TowerService<Request, Future: Send + 'static, Error: Error + Send + Sync + 'static>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
 
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.lock().unwrap().poll_ready(cx)
-    }
+    fn call(&self, req: Request) -> impl ServiceFuture<Self::Response, Self::Error> {
+        let mut inner = self.inner.clone();
 
-    fn call(
-        &self,
-        req: Request,
-    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + 'static
-    {
-        self.inner.lock().unwrap().call(req)
+        async move {
+            std::future::poll_fn(|cx| inner.poll_ready(cx)).await?;
+
+            inner.call(req).await
+        }
     }
 }
 

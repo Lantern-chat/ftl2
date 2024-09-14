@@ -1,6 +1,9 @@
 #[cfg(feature = "tls-rustls")]
 pub mod tls_rustls;
 
+#[cfg(feature = "tls-openssl")]
+pub mod tls_openssl;
+
 pub mod accept;
 
 use core::error::Error;
@@ -154,6 +157,7 @@ impl Handle {
 }
 
 /// HTTP server.
+#[must_use]
 pub struct Server<A = DefaultAcceptor> {
     acceptor: A,
     builder: Builder<TokioExecutor>,
@@ -297,11 +301,6 @@ impl<A> Server<A> {
 
             let service = make_service.make_service(socket_addr);
 
-            #[cfg(feature = "tower-service")]
-            futures::future::poll_fn(|cx| service.poll_ready(cx))
-                .await
-                .map_err(io_other)?;
-
             let acceptor = acceptor.clone();
             let builder = builder.clone();
             let watcher = handle.watcher();
@@ -342,4 +341,74 @@ impl<A> Server<A> {
 
         Ok(())
     }
+}
+
+use std::path::Path;
+
+#[allow(async_fn_in_trait)]
+pub trait TlsConfig: Sized + core::fmt::Debug {
+    type Error;
+    type DerCert;
+    type DerCertChain;
+
+    /// Create config from DER-encoded data.
+    ///
+    /// The certificate must be DER-encoded X.509.
+    ///
+    /// The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
+    async fn from_der(cert: Self::DerCertChain, key: Vec<u8>) -> Result<Self, Self::Error>;
+
+    /// Create config from PEM formatted data.
+    ///
+    /// Certificate and private key must be in PEM format.
+    async fn from_pem(cert: String, key: String) -> Result<Self, Self::Error>;
+
+    /// Create config from PEM formatted files.
+    ///
+    /// Contents of certificate file and private key file must be in PEM format.
+    async fn from_pem_file(
+        cert: impl AsRef<Path>,
+        key: impl AsRef<Path>,
+    ) -> Result<Self, Self::Error>;
+
+    /// Reload config from DER-encoded data.
+    ///
+    /// The certificate must be DER-encoded X.509.
+    ///
+    /// The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
+    async fn reload_from_der(
+        &self,
+        cert: Self::DerCertChain,
+        key: Vec<u8>,
+    ) -> Result<(), Self::Error>;
+
+    /// This helper will establish a TLS server based on strong cipher suites
+    /// from a PEM-formatted certificate chain and key.
+    async fn from_pem_chain_file(
+        chain: impl AsRef<Path>,
+        key: impl AsRef<Path>,
+    ) -> Result<Self, Self::Error>;
+
+    /// Reload config from PEM formatted data.
+    ///
+    /// Certificate and private key must be in PEM format.
+    async fn reload_from_pem(&self, cert: String, key: String) -> Result<(), Self::Error>;
+
+    /// Reload config from PEM formatted files.
+    ///
+    /// Contents of certificate file and private key file must be in PEM format.
+    async fn reload_from_pem_file(
+        &self,
+        cert: impl AsRef<Path>,
+        key: impl AsRef<Path>,
+    ) -> Result<(), Self::Error>;
+
+    /// Reload config from a PEM-formatted certificate chain and key.
+    ///
+    /// Contents of certificate file and private key file must be in PEM format.
+    async fn reload_from_pem_chain_file(
+        &self,
+        chain: impl AsRef<Path>,
+        key: impl AsRef<Path>,
+    ) -> Result<(), Self::Error>;
 }

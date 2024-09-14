@@ -1,4 +1,5 @@
 use core::future::Future;
+use std::sync::Arc;
 
 use futures::future::BoxFuture;
 
@@ -77,8 +78,14 @@ where
     }
 }
 
-/// A type-erased handler, equivalent to `Box<dyn Handler<..., S>>`.
-pub(crate) struct BoxedErasedHandler<S>(pub Box<dyn ErasedHandler<S>>);
+/// A type-erased handler, equivalent to `Arc<dyn Handler<..., S>>`.
+pub(crate) struct BoxedErasedHandler<S>(pub Arc<dyn ErasedHandler<S>>);
+
+impl<S> Clone for BoxedErasedHandler<S> {
+    fn clone(&self) -> Self {
+        BoxedErasedHandler(self.0.clone())
+    }
+}
 
 /// Effectively identical to `dyn Handler<T, S>`, but without needing to specify
 /// the `T` type parameters. Instead of a vtable, we have a single function
@@ -108,7 +115,7 @@ where
     S: Clone + Send + Sync + 'static,
 {
     pub fn erase<T>(handler: impl Handler<T, S>) -> Self {
-        BoxedErasedHandler(Box::new(MakeErasedHandler {
+        BoxedErasedHandler(Arc::new(MakeErasedHandler {
             handler,
             call: |handler, req, state| Box::pin(handler.call(req, state)),
         }))

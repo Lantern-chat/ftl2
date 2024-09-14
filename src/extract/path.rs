@@ -13,16 +13,16 @@ use super::FromRequestParts;
 #[repr(transparent)]
 pub struct Path<P: PathSegments>(pub P::Output);
 
-pub trait PathSegments {
-    type Output;
+pub trait PathSegments: Send + 'static {
+    type Output: Send + 'static;
 
     #[doc(hidden)]
     fn parse_segments(segments: &UrlParams) -> Result<Self::Output, PathRejection>;
 }
 
-pub trait PathSegment {
+pub trait PathSegment: Send + 'static {
     const NAME: &'static str;
-    type Type: FromStr<Err: Error>;
+    type Type: FromStr<Err: Error> + Send + 'static;
 }
 
 impl<T> PathSegments for T

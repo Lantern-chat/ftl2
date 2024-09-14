@@ -14,7 +14,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{extract::FromRequestParts, response::IntoResponse, Layer, Response, Service};
+use crate::{
+    extract::FromRequestParts, response::IntoResponse, service::ServiceFuture, Layer, Response,
+    Service,
+};
 use http::{header::HeaderName, request::Parts, HeaderValue, Request, StatusCode};
 
 /// Wrapper around [`std::net::IpAddr`] that can be extracted from the request parts.
@@ -177,15 +180,7 @@ where
     type Response = I::Response;
     type Error = I::Error;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(
-        &self,
-        req: Request<B>,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+    fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         let (mut parts, body) = req.into_parts();
 
         if let Some(ip) = get_ip_from_parts(&parts) {

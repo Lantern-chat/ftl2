@@ -3,7 +3,6 @@ use std::{
     error::Error,
     mem::ManuallyDrop,
     pin::Pin,
-    sync::Once,
     task::{Context, Poll},
 };
 
@@ -15,28 +14,19 @@ use http_body_util::{Full, StreamBody};
 use tokio_stream::wrappers::ReceiverStream;
 use tower_layer::Layer;
 
-use crate::{Request, Service};
+use crate::{service::ServiceFuture, Request, Service};
 
-pub struct ConvertAnyBody<S>(pub S);
-pub struct ConvertIncoming<S>(pub S);
+pub struct ConvertBody<S>(pub S);
 
-impl<S> Layer<S> for ConvertAnyBody<()> {
-    type Service = ConvertAnyBody<S>;
+impl<S> Layer<S> for ConvertBody<()> {
+    type Service = ConvertBody<S>;
 
     fn layer(&self, service: S) -> Self::Service {
-        ConvertAnyBody(service)
+        ConvertBody(service)
     }
 }
 
-impl<S> Layer<S> for ConvertIncoming<()> {
-    type Service = ConvertIncoming<S>;
-
-    fn layer(&self, service: S) -> Self::Service {
-        ConvertIncoming(service)
-    }
-}
-
-impl<S, B> Service<http::Request<B>> for ConvertAnyBody<S>
+impl<S, B> Service<http::Request<B>> for ConvertBody<S>
 where
     S: Service<Request>,
     B: http_body::Body<Data = Bytes, Error: Error + Send + Sync + 'static> + Send + 'static,
@@ -44,26 +34,13 @@ where
     type Error = S::Error;
     type Response = S::Response;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(
-        &self,
-        req: http::Request<B>,
-    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + 'static
-    {
+    fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         use http_body_util::BodyExt;
 
         let (parts, body) = req.into_parts();
 
         // we can more efficiently handle hyper::body::Incoming, so do some shinanigans
         let body = if TypeId::of::<B>() == TypeId::of::<hyper::body::Incoming>() {
-            static WARNING: Once = Once::new();
-
-            WARNING.call_once(|| log::warn!("Warning: ConvertAnyBody called with hyper::body::Incoming, consider using ConvertIncoming instead"));
-
             // SAFETY: we know the type is hyper::body::Incoming, this is effectively a transmute
             Body::from(unsafe {
                 let body = ManuallyDrop::new(body);
@@ -74,29 +51,6 @@ where
         };
 
         self.0.call(http::Request::from_parts(parts, body))
-    }
-}
-
-impl<S> Service<http::Request<hyper::body::Incoming>> for ConvertIncoming<S>
-where
-    S: Service<Request>,
-{
-    type Error = S::Error;
-    type Response = S::Response;
-
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(
-        &self,
-        req: http::Request<hyper::body::Incoming>,
-    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + 'static
-    {
-        let (parts, body) = req.into_parts();
-        self.0
-            .call(http::Request::from_parts(parts, Body::from(body)))
     }
 }
 
@@ -117,6 +71,7 @@ pub enum BodyError {
 
 #[derive(Default)]
 #[repr(transparent)]
+#[must_use]
 pub struct Body(BodyInner);
 
 #[derive(Default)]

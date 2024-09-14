@@ -19,11 +19,13 @@ type InnerRouter = matchit::Router<NodeId>;
 
 type NodeId = u64;
 
+#[derive(Clone)]
 pub struct HandlerService<STATE> {
     state: STATE,
     handler: BoxedErasedHandler<STATE>,
 }
 
+#[derive(Clone)]
 pub struct Route<SERVICE> {
     path: Arc<str>,
     service: SERVICE,
@@ -265,6 +267,7 @@ impl<STATE, SERVICE> Router<STATE, SERVICE> {
 }
 
 use crate::response::IntoResponse;
+use crate::service::ServiceFuture;
 use crate::{service::Service, Request, Response};
 
 impl<STATE, SERVICE> Service<Request> for Router<STATE, SERVICE>
@@ -275,16 +278,7 @@ where
     type Response = Response;
     type Error = Infallible;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // TODO: check if all routes are ready? Especially if they're layered with services.
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(
-        &self,
-        req: Request,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+    fn call(&self, req: Request) -> impl ServiceFuture<Self::Response, Self::Error> {
         use futures::future::Either;
 
         let (mut parts, body) = req.into_parts();
@@ -314,15 +308,7 @@ where
     type Response = Response;
     type Error = Infallible;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(
-        &self,
-        req: Request,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+    fn call(&self, req: Request) -> impl ServiceFuture<Self::Response, Self::Error> {
         let method = match *req.method() {
             Method::HEAD => MiniMethod::Head,
             Method::CONNECT => MiniMethod::Connect,

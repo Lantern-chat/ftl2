@@ -1,9 +1,12 @@
+#![warn(clippy::perf, clippy::style, clippy::must_use_candidate)]
 #![allow(clippy::manual_async_fn, unused_imports)]
 
 extern crate tracing as log;
 
 #[doc(hidden)]
 pub extern crate paste;
+
+pub extern crate http;
 
 #[macro_use]
 mod macros;
@@ -26,6 +29,7 @@ pub type Response = http::Response<body::Body>;
 
 pub use crate::extract::FromRequest;
 pub use crate::response::IntoResponse;
+pub use crate::router::Router;
 pub use crate::service::Service;
 pub use tower_layer::Layer;
 

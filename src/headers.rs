@@ -30,7 +30,7 @@ impl IntoResponse for HeaderError {
 
 impl<S, H> FromRequestParts<S> for Header<H>
 where
-    H: HeaderType,
+    H: HeaderType + Send + 'static,
 {
     type Rejection = HeaderError;
 

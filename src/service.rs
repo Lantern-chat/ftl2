@@ -9,17 +9,15 @@ use std::{
 
 use crate::{response::IntoResponse, Request};
 
+pub trait ServiceFuture<R, E>: Future<Output = Result<R, E>> + Send + 'static {}
+
+impl<T, R, E> ServiceFuture<R, E> for T where T: Future<Output = Result<R, E>> + Send + 'static {}
+
 pub trait Service<Req>: Send + Sync + 'static {
     type Response;
-    type Error;
+    type Error: Send + 'static;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>>;
-
-    fn call(
-        &self,
-        req: Req,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static;
+    fn call(&self, req: Req) -> impl ServiceFuture<Self::Response, Self::Error>;
 }
 
 // impl<F, Req, Fut, R, E> Service<Req> for F
@@ -33,7 +31,7 @@ pub trait Service<Req>: Send + Sync + 'static {
 //     fn call(
 //         &self,
 //         req: Req,
-//     ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+//     ) -> impl ServiceFuture<Self::Response, Self::Error> {
 //         (self)(req)
 //     }
 // }
@@ -45,15 +43,7 @@ where
     type Response = <<T as Deref>::Target as Service<R>>::Response;
     type Error = <<T as Deref>::Target as Service<R>>::Error;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        (**self).poll_ready(cx)
-    }
-
-    fn call(
-        &self,
-        req: R,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+    fn call(&self, req: R) -> impl ServiceFuture<Self::Response, Self::Error> {
         (**self).call(req)
     }
 }
@@ -91,15 +81,7 @@ where
     type Response = S::Response;
     type Error = S::Error;
 
-    #[cfg(feature = "tower-service")]
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
-    }
-
-    fn call(
-        &self,
-        req: Req1,
-    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + 'static {
+    fn call(&self, req: Req1) -> impl ServiceFuture<Self::Response, Self::Error> {
         self.service.call((self.f)(req))
     }
 }

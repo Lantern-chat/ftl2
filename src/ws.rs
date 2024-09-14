@@ -309,6 +309,7 @@ impl Sink<Message> for WebSocket {
 /// language feature has stabilized.
 #[derive(Eq, PartialEq, Clone)]
 #[repr(transparent)]
+#[must_use]
 pub struct Message {
     inner: protocol::Message,
 }
@@ -364,31 +365,37 @@ impl Message {
     }
 
     /// Returns true if this message is a Text message.
+    #[must_use]
     pub fn is_text(&self) -> bool {
         self.inner.is_text()
     }
 
     /// Returns true if this message is a Binary message.
+    #[must_use]
     pub fn is_binary(&self) -> bool {
         self.inner.is_binary()
     }
 
     /// Returns true if this message a is a Close message.
+    #[must_use]
     pub fn is_close(&self) -> bool {
         self.inner.is_close()
     }
 
     /// Returns true if this message is a Ping message.
+    #[must_use]
     pub fn is_ping(&self) -> bool {
         self.inner.is_ping()
     }
 
     /// Returns true if this message is a Pong message.
+    #[must_use]
     pub fn is_pong(&self) -> bool {
         self.inner.is_pong()
     }
 
     /// Try to get the close frame (close code and reason)
+    #[must_use]
     pub fn close_frame(&self) -> Option<(u16, &str)> {
         if let protocol::Message::Close(Some(ref close_frame)) = self.inner {
             Some((close_frame.code.into(), close_frame.reason.as_ref()))
@@ -398,6 +405,7 @@ impl Message {
     }
 
     /// Try to get a reference to the string text, if this is a Text message.
+    #[must_use]
     pub fn to_str(&self) -> Option<&str> {
         match self.inner {
             protocol::Message::Text(ref s) => Some(s),
@@ -406,6 +414,7 @@ impl Message {
     }
 
     /// Return the bytes of this message, if the message can contain data.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         match self.inner {
             protocol::Message::Text(ref s) => s.as_bytes(),
@@ -418,6 +427,7 @@ impl Message {
     }
 
     /// Destructure this message into binary data.
+    #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.inner.into_data()
     }

@@ -6,7 +6,7 @@ use http::{
 };
 use std::{borrow::Cow, convert::Infallible};
 
-use crate::{body::Body, Response};
+pub use crate::{body::Body, Response};
 
 pub trait IntoResponseParts {
     fn into_response_parts(self, parts: &mut Parts);

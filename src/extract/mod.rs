@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::{convert::Infallible, str::FromStr as _, sync::Arc};
+use std::{convert::Infallible, ops::Deref, str::FromStr as _, sync::Arc};
 
 use http::{
     request::Parts, uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri,
@@ -8,8 +8,8 @@ use http::{
 
 use crate::{body::Body, IntoResponse, Request, Response};
 
-pub trait FromRequestParts<S>: Sized {
-    type Rejection: IntoResponse;
+pub trait FromRequestParts<S>: Sized + Send + 'static {
+    type Rejection: IntoResponse + Send + 'static;
 
     fn from_request_parts(
         parts: &mut Parts,
@@ -25,8 +25,8 @@ mod private {
     pub enum ViaRequest {}
 }
 
-pub trait FromRequest<S, Z = private::ViaRequest>: Sized {
-    type Rejection: IntoResponse;
+pub trait FromRequest<S, Z = private::ViaRequest>: Sized + Send + 'static {
+    type Rejection: IntoResponse + Send + 'static;
 
     fn from_request(
         req: Request,
@@ -137,7 +137,7 @@ pub struct Extension<E>(pub E);
 
 impl<S> FromRequestParts<S> for State<S>
 where
-    S: Clone + Send,
+    S: Clone + Send + 'static,
 {
     type Rejection = Infallible;
 
@@ -218,8 +218,8 @@ where
 
 impl<S, T> FromRequest<S> for Result<T, T::Rejection>
 where
-    T: FromRequest<S>,
-    S: Send + Sync,
+    T: FromRequest<S, Rejection: Send + 'static>,
+    S: Send + Sync + 'static,
 {
     type Rejection = Infallible;
 
@@ -233,8 +233,8 @@ where
 
 impl<S, T> FromRequestParts<S> for Result<T, T::Rejection>
 where
-    T: FromRequestParts<S>,
-    S: Send + Sync,
+    T: FromRequestParts<S, Rejection: Send + 'static>,
+    S: Send + Sync + 'static,
 {
     type Rejection = Infallible;
 
@@ -361,6 +361,15 @@ impl<S> FromRequestParts<S> for Extensions {
 
 #[derive(Clone, Debug)]
 pub struct MatchedPath(pub Arc<str>);
+
+impl Deref for MatchedPath {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum MatchedPathRejection {
