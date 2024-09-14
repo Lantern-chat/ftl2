@@ -252,11 +252,8 @@ impl<A> Server<A> {
         M: MakeService<SocketAddr, http::Request<Incoming>>,
         A: Clone + Accept<TcpStream, M::Service, Stream: 'static>,
         // The acceptor maps `M::Service` to its own service type.
-        A::Service: Service<
-            http::Request<Incoming>,
-            Response = http::Response<B>,
-            Error: Error + Send + Sync + 'static,
-        >,
+        A::Service:
+            Service<http::Request<Incoming>, Response = http::Response<B>, Error: Error + Send + Sync + 'static>,
         // Body requirements
         B: http_body::Body<Data: Send, Error: Error + Send + Sync + 'static> + Send + 'static,
     {
@@ -366,28 +363,18 @@ pub trait TlsConfig: Sized + core::fmt::Debug {
     /// Create config from PEM formatted files.
     ///
     /// Contents of certificate file and private key file must be in PEM format.
-    async fn from_pem_file(
-        cert: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> Result<Self, Self::Error>;
+    async fn from_pem_file(cert: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<Self, Self::Error>;
 
     /// Reload config from DER-encoded data.
     ///
     /// The certificate must be DER-encoded X.509.
     ///
     /// The private key must be DER-encoded ASN.1 in either PKCS#8 or PKCS#1 format.
-    async fn reload_from_der(
-        &self,
-        cert: Self::DerCertChain,
-        key: Vec<u8>,
-    ) -> Result<(), Self::Error>;
+    async fn reload_from_der(&self, cert: Self::DerCertChain, key: Vec<u8>) -> Result<(), Self::Error>;
 
     /// This helper will establish a TLS server based on strong cipher suites
     /// from a PEM-formatted certificate chain and key.
-    async fn from_pem_chain_file(
-        chain: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> Result<Self, Self::Error>;
+    async fn from_pem_chain_file(chain: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<Self, Self::Error>;
 
     /// Reload config from PEM formatted data.
     ///
@@ -397,11 +384,8 @@ pub trait TlsConfig: Sized + core::fmt::Debug {
     /// Reload config from PEM formatted files.
     ///
     /// Contents of certificate file and private key file must be in PEM format.
-    async fn reload_from_pem_file(
-        &self,
-        cert: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> Result<(), Self::Error>;
+    async fn reload_from_pem_file(&self, cert: impl AsRef<Path>, key: impl AsRef<Path>)
+        -> Result<(), Self::Error>;
 
     /// Reload config from a PEM-formatted certificate chain and key.
     ///

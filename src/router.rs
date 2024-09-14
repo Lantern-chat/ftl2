@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::error::Error;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::sync::{Arc, LazyLock};
@@ -13,6 +14,7 @@ use matchit::Match;
 use tower_layer::Layer;
 
 use crate::body::Body;
+use crate::extract::MatchedPath;
 use crate::handler::{BoxedErasedHandler, Handler};
 
 type InnerRouter = matchit::Router<NodeId>;
@@ -193,16 +195,12 @@ impl<STATE> Router<STATE> {
 }
 
 impl<STATE, SERVICE> Router<STATE, SERVICE> {
-    pub fn layer<L>(self, layer: L) -> Router<STATE, L::Service>
+    pub fn route_layer<L>(self, layer: L) -> Router<STATE, L::Service>
     where
         L: Layer<SERVICE>,
     {
         Router {
-            routes: self
-                .routes
-                .into_iter()
-                .map(|(id, route)| (id, route.wrap(&layer)))
-                .collect(),
+            routes: self.routes.into_iter().map(|(id, route)| (id, route.wrap(&layer))).collect(),
 
             get: self.get,
             post: self.post,
@@ -270,15 +268,16 @@ use crate::response::IntoResponse;
 use crate::service::ServiceFuture;
 use crate::{service::Service, Request, Response};
 
-impl<STATE, SERVICE> Service<Request> for Router<STATE, SERVICE>
+impl<STATE, SERVICE, B> Service<http::Request<B>> for Router<STATE, SERVICE>
 where
     STATE: Clone + Send + Sync + 'static,
     SERVICE: Service<Request, Response = Response, Error = Infallible> + 'static,
+    B: http_body::Body<Data = bytes::Bytes, Error: Error + Send + Sync + 'static> + Send + 'static,
 {
     type Response = Response;
     type Error = Infallible;
 
-    fn call(&self, req: Request) -> impl ServiceFuture<Self::Response, Self::Error> {
+    fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         use futures::future::Either;
 
         let (mut parts, body) = req.into_parts();
@@ -287,9 +286,7 @@ where
             Ok(match_) => {
                 crate::params::insert_url_params(&mut parts.extensions, match_.params);
 
-                parts
-                    .extensions
-                    .insert(crate::extract::MatchedPath(match_.value.path.clone()));
+                parts.extensions.insert(MatchedPath(match_.value.path.clone()));
 
                 match_.value
             }
@@ -297,7 +294,7 @@ where
             Err(None) => return Either::Right(NotFound),
         };
 
-        Either::Left(route.service.call(Request::from_parts(parts, body)))
+        Either::Left(route.service.call(Request::from_parts(parts, Body::from_any_body(body))))
     }
 }
 
@@ -315,32 +312,30 @@ where
             _ => MiniMethod::Other,
         };
 
-        self.handler
-            .call(req, self.state.clone())
-            .map(move |mut resp| {
-                if method == MiniMethod::Connect && resp.status().is_success() {
-                    // From https://httpwg.org/specs/rfc9110.html#CONNECT:
-                    // > A server MUST NOT send any Transfer-Encoding or
-                    // > Content-Length header fields in a 2xx (Successful)
-                    // > response to CONNECT.
-                    if resp.headers().contains_key(header::CONTENT_LENGTH)
-                        || resp.headers().contains_key(header::TRANSFER_ENCODING)
-                        || resp.size_hint().lower() != 0
-                    {
-                        log::error!("response to CONNECT with nonempty body");
-                        resp = resp.map(|_| Body::empty());
-                    }
-                } else {
-                    // make sure to set content-length before removing the body
-                    set_content_length(resp.size_hint(), resp.headers_mut());
-                }
-
-                if method == MiniMethod::Head {
+        self.handler.call(req, self.state.clone()).map(move |mut resp| {
+            if method == MiniMethod::Connect && resp.status().is_success() {
+                // From https://httpwg.org/specs/rfc9110.html#CONNECT:
+                // > A server MUST NOT send any Transfer-Encoding or
+                // > Content-Length header fields in a 2xx (Successful)
+                // > response to CONNECT.
+                if resp.headers().contains_key(header::CONTENT_LENGTH)
+                    || resp.headers().contains_key(header::TRANSFER_ENCODING)
+                    || resp.size_hint().lower() != 0
+                {
+                    log::error!("response to CONNECT with nonempty body");
                     resp = resp.map(|_| Body::empty());
                 }
+            } else {
+                // make sure to set content-length before removing the body
+                set_content_length(resp.size_hint(), resp.headers_mut());
+            }
 
-                Ok(resp)
-            })
+            if method == MiniMethod::Head {
+                resp = resp.map(|_| Body::empty());
+            }
+
+            Ok(resp)
+        })
     }
 }
 

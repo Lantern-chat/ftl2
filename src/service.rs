@@ -107,8 +107,7 @@ where
     }
 }
 
-impl<S, Target> MakeService<Target, http::Request<hyper::body::Incoming>>
-    for FtlServiceToHyperMakeService<S>
+impl<S, Target> MakeService<Target, http::Request<hyper::body::Incoming>> for FtlServiceToHyperMakeService<S>
 where
     S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send,
 {

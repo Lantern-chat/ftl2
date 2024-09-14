@@ -1,7 +1,6 @@
 use std::{
     any::TypeId,
     error::Error,
-    mem::ManuallyDrop,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -35,22 +34,9 @@ where
     type Response = S::Response;
 
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        use http_body_util::BodyExt;
-
         let (parts, body) = req.into_parts();
 
-        // we can more efficiently handle hyper::body::Incoming, so do some shinanigans
-        let body = if TypeId::of::<B>() == TypeId::of::<hyper::body::Incoming>() {
-            // SAFETY: we know the type is hyper::body::Incoming, this is effectively a transmute
-            Body::from(unsafe {
-                let body = ManuallyDrop::new(body);
-                std::ptr::read::<hyper::body::Incoming>(&body as *const _ as *const _)
-            })
-        } else {
-            Body::wrap(body.map_err(|e| BodyError::Generic(Box::new(e))))
-        };
-
-        self.0.call(http::Request::from_parts(parts, body))
+        self.0.call(http::Request::from_parts(parts, Body::from_any_body(body)))
     }
 }
 
@@ -248,5 +234,37 @@ impl BodySender {
     /// Aborts the body stream with an [`BodyError::StreamAborted`] error
     pub async fn abort(self) -> bool {
         self.send(Err(BodyError::StreamAborted)).await.is_ok()
+    }
+}
+
+impl Body {
+    pub(crate) fn from_any_body<B>(body: B) -> Self
+    where
+        B: http_body::Body<Data = Bytes, Error: Error + Send + Sync + 'static> + Send + 'static,
+    {
+        use core::mem::ManuallyDrop;
+
+        let body = ManuallyDrop::new(body);
+        let ptr = &body as *const ManuallyDrop<B>;
+
+        match TypeId::of::<B>() {
+            id if id == TypeId::of::<hyper::body::Incoming>() => {
+                // SAFETY: we know the type is hyper::body::Incoming
+                Body::from(unsafe { std::ptr::read::<hyper::body::Incoming>(ptr.cast()) })
+            }
+            id if id == TypeId::of::<Body>() => {
+                // SAFETY: we know the type is Body
+                unsafe { std::ptr::read::<Body>(ptr.cast()) }
+            }
+            id if id == TypeId::of::<Full<Bytes>>() => {
+                // SAFETY: we know the type is Full<Bytes>
+                Body(BodyInner::Full(unsafe { std::ptr::read(ptr.cast()) }))
+            }
+            _ => {
+                use http_body_util::BodyExt;
+
+                Body::wrap(ManuallyDrop::into_inner(body).map_err(|e| BodyError::Generic(Box::new(e))))
+            }
+        }
     }
 }

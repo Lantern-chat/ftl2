@@ -132,18 +132,14 @@ impl TlsConfig for RustlsConfig {
     type DerCertChain = Vec<Self::DerCert>;
 
     async fn from_der(cert: Self::DerCertChain, key: Vec<u8>) -> io::Result<Self> {
-        let server_config = spawn_blocking(|| config_from_der(cert, key))
-            .await
-            .unwrap()?;
+        let server_config = spawn_blocking(|| config_from_der(cert, key)).await.unwrap()?;
         let inner = Arc::new(ArcSwap::from_pointee(server_config));
 
         Ok(Self { inner })
     }
 
     async fn from_pem(cert: String, key: String) -> io::Result<Self> {
-        let server_config = spawn_blocking(|| config_from_pem(cert, key))
-            .await
-            .unwrap()?;
+        let server_config = spawn_blocking(|| config_from_pem(cert, key)).await.unwrap()?;
         let inner = Arc::new(ArcSwap::from_pointee(server_config));
 
         Ok(Self { inner })
@@ -157,9 +153,7 @@ impl TlsConfig for RustlsConfig {
     }
 
     async fn reload_from_der(&self, cert: Self::DerCertChain, key: Vec<u8>) -> io::Result<()> {
-        let server_config = spawn_blocking(|| config_from_der(cert, key))
-            .await
-            .unwrap()?;
+        let server_config = spawn_blocking(|| config_from_der(cert, key)).await.unwrap()?;
         let inner = Arc::new(server_config);
 
         self.inner.store(inner);
@@ -167,10 +161,7 @@ impl TlsConfig for RustlsConfig {
         Ok(())
     }
 
-    async fn from_pem_chain_file(
-        chain: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> io::Result<Self> {
+    async fn from_pem_chain_file(chain: impl AsRef<Path>, key: impl AsRef<Path>) -> io::Result<Self> {
         let server_config = config_from_pem_chain_file(chain, key).await?;
         let inner = Arc::new(ArcSwap::from_pointee(server_config));
 
@@ -178,9 +169,7 @@ impl TlsConfig for RustlsConfig {
     }
 
     async fn reload_from_pem(&self, cert: String, key: String) -> io::Result<()> {
-        let server_config = spawn_blocking(|| config_from_pem(cert, key))
-            .await
-            .unwrap()?;
+        let server_config = spawn_blocking(|| config_from_pem(cert, key)).await.unwrap()?;
         let inner = Arc::new(server_config);
 
         self.inner.store(inner);
@@ -188,11 +177,7 @@ impl TlsConfig for RustlsConfig {
         Ok(())
     }
 
-    async fn reload_from_pem_file(
-        &self,
-        cert: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> io::Result<()> {
+    async fn reload_from_pem_file(&self, cert: impl AsRef<Path>, key: impl AsRef<Path>) -> io::Result<()> {
         let server_config = config_from_pem_file(cert, key).await?;
         let inner = Arc::new(server_config);
 
@@ -201,11 +186,7 @@ impl TlsConfig for RustlsConfig {
         Ok(())
     }
 
-    async fn reload_from_pem_chain_file(
-        &self,
-        chain: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> io::Result<()> {
+    async fn reload_from_pem_chain_file(&self, chain: impl AsRef<Path>, key: impl AsRef<Path>) -> io::Result<()> {
         let server_config = config_from_pem_chain_file(chain, key).await?;
         let inner = Arc::new(server_config);
 
@@ -225,10 +206,8 @@ fn config_from_der(cert: Vec<Vec<u8>>, key: Vec<u8>) -> io::Result<ServerConfig>
     let cert = cert.into_iter().map(CertificateDer::from).collect();
     let key = PrivateKeyDer::try_from(key).map_err(io_other)?;
 
-    let mut config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(cert, key)
-        .map_err(io_other)?;
+    let mut config =
+        ServerConfig::builder().with_no_client_auth().with_single_cert(cert, key).map_err(io_other)?;
 
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
 
@@ -261,36 +240,27 @@ fn config_from_pem(cert: String, key: String) -> io::Result<ServerConfig> {
     config_from_der(cert, key)
 }
 
-async fn config_from_pem_file(
-    cert: impl AsRef<Path>,
-    key: impl AsRef<Path>,
-) -> io::Result<ServerConfig> {
+async fn config_from_pem_file(cert: impl AsRef<Path>, key: impl AsRef<Path>) -> io::Result<ServerConfig> {
     let cert = tokio::fs::read_to_string(cert.as_ref()).await?;
     let key = tokio::fs::read_to_string(key.as_ref()).await?;
 
     config_from_pem(cert, key)
 }
 
-async fn config_from_pem_chain_file(
-    cert: impl AsRef<Path>,
-    chain: impl AsRef<Path>,
-) -> io::Result<ServerConfig> {
+async fn config_from_pem_chain_file(cert: impl AsRef<Path>, chain: impl AsRef<Path>) -> io::Result<ServerConfig> {
     let cert = tokio::fs::read_to_string(cert.as_ref()).await?;
     let key = tokio::fs::read_to_string(chain.as_ref()).await?;
 
     let cert = rustls_pemfile::certs(&mut cert.as_ref())
         .map(|it| it.map(|it| CertificateDer::from(it.to_vec())))
         .collect::<Result<Vec<_>, _>>()?;
-    let key_cert: PrivateKeyDer = match rustls_pemfile::read_one(&mut key.as_ref())?
-        .ok_or_else(|| io_other("could not parse pem file"))?
-    {
-        Item::Pkcs8Key(key) => Ok(key.into()),
-        Item::Sec1Key(key) => Ok(key.into()),
-        Item::Pkcs1Key(key) => Ok(key.into()),
-        x => Err(io_other(format!(
-            "invalid certificate format, received: {x:?}"
-        ))),
-    }?;
+    let key_cert: PrivateKeyDer =
+        match rustls_pemfile::read_one(&mut key.as_ref())?.ok_or_else(|| io_other("could not parse pem file"))? {
+            Item::Pkcs8Key(key) => Ok(key.into()),
+            Item::Sec1Key(key) => Ok(key.into()),
+            Item::Pkcs1Key(key) => Ok(key.into()),
+            x => Err(io_other(format!("invalid certificate format, received: {x:?}"))),
+        }?;
 
     ServerConfig::builder()
         .with_no_client_auth()

@@ -1,10 +1,7 @@
 use core::future::Future;
 use std::{convert::Infallible, ops::Deref, str::FromStr as _, sync::Arc};
 
-use http::{
-    request::Parts, uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri,
-    Version,
-};
+use http::{request::Parts, uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri, Version};
 
 use crate::{body::Body, IntoResponse, Request, Response};
 
@@ -28,19 +25,13 @@ mod private {
 pub trait FromRequest<S, Z = private::ViaRequest>: Sized + Send + 'static {
     type Rejection: IntoResponse + Send + 'static;
 
-    fn from_request(
-        req: Request,
-        state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+    fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
 }
 
 impl<S> FromRequest<S> for Request {
     type Rejection = Infallible;
 
-    fn from_request(
-        req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(req)
     }
 }
@@ -48,10 +39,7 @@ impl<S> FromRequest<S> for Request {
 impl<S> FromRequest<S> for Body {
     type Rejection = Infallible;
 
-    fn from_request(
-        req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(req.into_body())
     }
 }
@@ -63,10 +51,7 @@ where
 {
     type Rejection = <Self as FromRequestParts<S>>::Rejection;
 
-    fn from_request(
-        req: Request,
-        state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
             let (mut parts, _) = req.into_parts();
             Self::from_request_parts(&mut parts, state).await
@@ -193,10 +178,7 @@ where
 {
     type Rejection = Infallible;
 
-    fn from_request(
-        req: Request,
-        state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(T::from_request(req, state).await.ok()) }
     }
 }
@@ -223,10 +205,7 @@ where
 {
     type Rejection = Infallible;
 
-    fn from_request(
-        req: Request,
-        state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(T::from_request(req, state).await) }
     }
 }
@@ -310,15 +289,12 @@ impl<S> FromRequestParts<S> for Authority {
             .get(HeaderName::from_static("host"))
             .ok_or(AuthorityRejection::MissingAuthority)
             .and_then(|hdr| {
-                Authority::from_str(
-                    hdr.to_str()
-                        .map_err(|_| AuthorityRejection::InvalidAuthority)?,
-                )
-                .map_err(|_| AuthorityRejection::InvalidAuthority)
+                Authority::from_str(hdr.to_str().map_err(|_| AuthorityRejection::InvalidAuthority)?)
+                    .map_err(|_| AuthorityRejection::InvalidAuthority)
             });
 
         futures::future::ready(match (from_uri, from_header) {
-            (Some(_), Ok(b)) => Ok(b), // defer to HOST as what the client intended
+            (Some(_), Ok(b)) => Ok(b),          // defer to HOST as what the client intended
             (Some(a), Err(_)) => Ok(a.clone()), // HOST is invalid, but URI is valid
             (None, Ok(b)) => Ok(b),
             (None, Err(e)) => Err(e),
@@ -395,11 +371,7 @@ impl<S> FromRequestParts<S> for MatchedPath {
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ready(
-            parts
-                .extensions
-                .get::<Self>()
-                .cloned()
-                .ok_or(MatchedPathRejection::MatchedPathMissing),
+            parts.extensions.get::<Self>().cloned().ok_or(MatchedPathRejection::MatchedPathMissing),
         )
     }
 }

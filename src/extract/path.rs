@@ -37,9 +37,7 @@ where
                 return Err(PathRejection::InvalidUtf8InPathParam { key: key.clone() });
             }
             UrlParams::Params(params) => {
-                params
-                    .iter()
-                    .find_map(|(k, v)| if k.as_ref() == T::NAME { Some(v) } else { None })
+                params.iter().find_map(|(k, v)| if k.as_ref() == T::NAME { Some(v) } else { None })
             }
         };
 
@@ -111,10 +109,7 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        let params = parts
-            .extensions
-            .get::<UrlParams>()
-            .ok_or(PathRejection::MissingParameters);
+        let params = parts.extensions.get::<UrlParams>().ok_or(PathRejection::MissingParameters);
 
         async move { Ok(Path(P::parse_segments(params?)?)) }
     }

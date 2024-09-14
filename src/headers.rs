@@ -17,13 +17,10 @@ pub enum HeaderError {
 impl IntoResponse for HeaderError {
     fn into_response(self) -> Response {
         IntoResponse::into_response(match self {
-            HeaderError::HeaderNotFound(name) => {
-                (format!("Missing Header: {name}"), StatusCode::BAD_REQUEST)
+            HeaderError::HeaderNotFound(name) => (format!("Missing Header: {name}"), StatusCode::BAD_REQUEST),
+            HeaderError::InvalidHeader(name, err) => {
+                (format!("Invalid Header: {name}: {err}"), StatusCode::BAD_REQUEST)
             }
-            HeaderError::InvalidHeader(name, err) => (
-                format!("Invalid Header: {name}: {err}"),
-                StatusCode::BAD_REQUEST,
-            ),
         })
     }
 }

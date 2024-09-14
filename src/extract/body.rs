@@ -13,10 +13,7 @@ use crate::{
 impl<S> FromRequest<S> for BodyStream<Body> {
     type Rejection = Infallible;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(BodyStream::new(req.body_mut().take())) }
     }
 }
@@ -31,27 +28,15 @@ pub type CollectedBytes = Collected<Bytes>;
 impl<S> FromRequest<S> for CollectedBytes {
     type Rejection = BodyRejectionError;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            req.body_mut()
-                .take()
-                .collect()
-                .await
-                .map_err(BodyRejectionError::from)
-        }
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move { req.body_mut().take().collect().await.map_err(BodyRejectionError::from) }
     }
 }
 
 impl<S> FromRequest<S> for Bytes {
     type Rejection = BodyRejectionError;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
             match req.body_mut().take().collect().await {
                 Ok(collected) => Ok(collected.to_bytes()),
@@ -64,17 +49,9 @@ impl<S> FromRequest<S> for Bytes {
 impl<S> FromRequest<S> for BytesMut {
     type Rejection = BodyRejectionError;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
-            let collected = req
-                .body_mut()
-                .take()
-                .collect()
-                .await
-                .map_err(BodyRejectionError::from)?;
+            let collected = req.body_mut().take().collect().await.map_err(BodyRejectionError::from)?;
 
             let buf = collected.aggregate();
 
@@ -101,10 +78,7 @@ fn vec_from_collected(collected: Collected<Bytes>) -> Vec<u8> {
 impl<S> FromRequest<S> for Vec<u8> {
     type Rejection = BodyRejectionError;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(vec_from_collected(req.body_mut().take().collect().await?)) }
     }
 }
@@ -112,10 +86,7 @@ impl<S> FromRequest<S> for Vec<u8> {
 impl<S> FromRequest<S> for String {
     type Rejection = StringRejectionError;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
             Ok(String::from_utf8(vec_from_collected(
                 req.body_mut().take().collect().await?,
@@ -155,10 +126,9 @@ fn body_error_to_response(err: BodyError) -> Response {
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
         BodyError::HyperError(err) => match err {
-            _ if err.is_parse_too_large() => (
-                Cow::Borrowed("The body was too large"),
-                StatusCode::PAYLOAD_TOO_LARGE,
-            ),
+            _ if err.is_parse_too_large() => {
+                (Cow::Borrowed("The body was too large"), StatusCode::PAYLOAD_TOO_LARGE)
+            }
             _ if err.is_body_write_aborted()
                 || err.is_canceled()
                 || err.is_closed()
@@ -169,10 +139,7 @@ fn body_error_to_response(err: BodyError) -> Response {
                     StatusCode::UNPROCESSABLE_ENTITY,
                 )
             }
-            _ if err.is_timeout() => (
-                Cow::Borrowed("The request timed out"),
-                StatusCode::GATEWAY_TIMEOUT,
-            ),
+            _ if err.is_timeout() => (Cow::Borrowed("The request timed out"), StatusCode::GATEWAY_TIMEOUT),
             _ if err.is_parse() || err.is_parse_status() => (
                 Cow::Borrowed("An error occurred while parsing the body"),
                 StatusCode::BAD_REQUEST,
@@ -197,10 +164,9 @@ impl IntoResponse for StringRejectionError {
     fn into_response(self) -> Response {
         match self {
             StringRejectionError::BodyError(err) => body_error_to_response(err),
-            StringRejectionError::FromUtf8Error(_) => IntoResponse::into_response((
-                "The body was not valid UTF-8",
-                StatusCode::BAD_REQUEST,
-            )),
+            StringRejectionError::FromUtf8Error(_) => {
+                IntoResponse::into_response(("The body was not valid UTF-8", StatusCode::BAD_REQUEST))
+            }
         }
     }
 }
@@ -220,10 +186,7 @@ impl core::ops::Deref for LossyString {
 impl<S> FromRequest<S> for LossyString {
     type Rejection = BodyRejectionError;
 
-    fn from_request(
-        mut req: Request,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
             let vec = vec_from_collected(req.body_mut().take().collect().await?);
 
@@ -250,9 +213,7 @@ where
 {
     fn into_response(self) -> Response {
         IntoResponse::into_response(match self {
-            LimitedRejectionError::TooLarge => {
-                ("The body was too large", StatusCode::PAYLOAD_TOO_LARGE)
-            }
+            LimitedRejectionError::TooLarge => ("The body was too large", StatusCode::PAYLOAD_TOO_LARGE),
             LimitedRejectionError::BodyError(err) => return err.into_response(),
         })
     }
@@ -271,10 +232,7 @@ where
 {
     type Rejection = LimitedRejectionError<B::Rejection>;
 
-    fn from_request(
-        req: Request,
-        state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         use http_body::Body;
 
         async move {
@@ -283,9 +241,7 @@ where
             //          body is too large during collection above
             let limit = N as u64;
 
-            if req.body().size_hint().upper() > Some(limit)
-                || req.body().size_hint().lower() > limit
-            {
+            if req.body().size_hint().upper() > Some(limit) || req.body().size_hint().lower() > limit {
                 Err(LimitedRejectionError::TooLarge)
             } else {
                 Ok(Limited(B::from_request(req, state).await?))

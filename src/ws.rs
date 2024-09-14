@@ -7,9 +7,7 @@ use futures::{future, ready, Future, Sink, Stream};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use headers::{
-    Connection, HeaderMapExt, SecWebsocketAccept, SecWebsocketKey, SecWebsocketVersion, Upgrade,
-};
+use headers::{Connection, HeaderMapExt, SecWebsocketAccept, SecWebsocketKey, SecWebsocketVersion, Upgrade};
 use http::{HeaderName, HeaderValue, Method, StatusCode, Version};
 use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
@@ -36,15 +34,11 @@ impl IntoResponse for WsRejection {
             WsRejection::MethodNotConnect => ("Method Not CONNECT", StatusCode::METHOD_NOT_ALLOWED),
             WsRejection::MissingUpgrade => ("Missing Upgrade header", StatusCode::BAD_REQUEST),
             WsRejection::IncorrectUpgrade => ("Incorrect Upgrade header", StatusCode::BAD_REQUEST),
-            WsRejection::IncorrectWebSocketVersion => {
-                ("Incorrect WebSocket version", StatusCode::BAD_REQUEST)
-            }
+            WsRejection::IncorrectWebSocketVersion => ("Incorrect WebSocket version", StatusCode::BAD_REQUEST),
             WsRejection::InvalidProtocolPsuedoHeader => {
                 ("Invalid protocol psuedo-header", StatusCode::BAD_REQUEST)
             }
-            WsRejection::MissingWebSocketKey => {
-                ("Missing Sec-WebSocket-Key header", StatusCode::BAD_REQUEST)
-            }
+            WsRejection::MissingWebSocketKey => ("Missing Sec-WebSocket-Key header", StatusCode::BAD_REQUEST),
         })
     }
 }
@@ -91,11 +85,7 @@ impl<S> FromRequest<S> for Ws {
                     return Err(WsRejection::MethodNotConnect);
                 }
 
-                if req
-                    .extensions()
-                    .get::<hyper::ext::Protocol>()
-                    .map_or(true, |p| p.as_str() != "websocket")
-                {
+                if req.extensions().get::<hyper::ext::Protocol>().map_or(true, |p| p.as_str() != "websocket") {
                     return Err(WsRejection::InvalidProtocolPsuedoHeader);
                 }
 
@@ -107,10 +97,7 @@ impl<S> FromRequest<S> for Ws {
                 _ => return Err(WsRejection::IncorrectWebSocketVersion),
             }
 
-            let sec_websocket_protocol = req
-                .headers()
-                .get(hyper::header::SEC_WEBSOCKET_PROTOCOL)
-                .cloned();
+            let sec_websocket_protocol = req.headers().get(hyper::header::SEC_WEBSOCKET_PROTOCOL).cloned();
 
             let on_upgrade = req.extensions_mut().remove::<OnUpgrade>();
 
@@ -217,9 +204,7 @@ where
                 Header(Connection::upgrade()),
                 Header(Upgrade::websocket()),
                 Header(SecWebsocketAccept::from(key)),
-                self.ws
-                    .sec_websocket_protocol
-                    .map(|p| [(hyper::header::SEC_WEBSOCKET_PROTOCOL, p)]),
+                self.ws.sec_websocket_protocol.map(|p| [(hyper::header::SEC_WEBSOCKET_PROTOCOL, p)]),
             )),
             // HTTP/2
             // As established in RFC 9113 section 8.5, we just respond

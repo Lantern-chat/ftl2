@@ -307,15 +307,8 @@ impl<K: Key> RateLimitLayerBuilder<K> {
     }
 
     /// Insert many route entries into the quota table for the rate limiter.
-    pub fn add_routes(
-        &mut self,
-        quotas: impl IntoIterator<Item = (impl Into<Route<'static>>, gcra::Quota)>,
-    ) {
-        self.quotas.extend(
-            quotas
-                .into_iter()
-                .map(|(route, quota)| (route.into(), quota)),
-        );
+    pub fn add_routes(&mut self, quotas: impl IntoIterator<Item = (impl Into<Route<'static>>, gcra::Quota)>) {
+        self.quotas.extend(quotas.into_iter().map(|(route, quota)| (route.into(), quota)));
     }
 
     /// Insert many route entries into the quota table for the rate limiter.
@@ -523,9 +516,7 @@ where
 
         async move {
             let key = RouteWithKey {
-                key: get_user_key(&mut parts)
-                    .await
-                    .map_err(Error::KeyRejection)?,
+                key: get_user_key(&mut parts).await.map_err(Error::KeyRejection)?,
                 path,
                 method: parts.method.clone(),
             };
@@ -541,10 +532,7 @@ where
                 return Err(Error::RateLimit(e));
             }
 
-            inner
-                .call(Request::from_parts(parts, body))
-                .await
-                .map_err(Error::Inner)
+            inner.call(Request::from_parts(parts, body)).await.map_err(Error::Inner)
         }
     }
 }
@@ -707,12 +695,7 @@ pub mod extensions {
 
         /// Get the quota for the route that was rate limited.
         pub fn quota(&self) -> gcra::Quota {
-            self.layer
-                .builder
-                .quotas
-                .get(&self.key.as_route())
-                .copied()
-                .expect("no quota found for route")
+            self.layer.builder.quotas.get(&self.key.as_route()).copied().expect("no quota found for route")
         }
 
         /// See [`gcra::RateLimiter::penalize`] for more information.

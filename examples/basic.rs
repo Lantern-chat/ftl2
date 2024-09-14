@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use ftl::{
-    body::ConvertBody,
     extract::{real_ip::RealIpPrivacyMask, Extension, MatchedPath},
     layers::rate_limit::{gcra::Quota, RateLimitLayerBuilder},
     router::Router,
@@ -26,9 +25,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     // load tls config from pem files
-    let tls_config = OpenSSLConfig::from_pem_file("cert.pem", "key.pem")
-        .await
-        .unwrap();
+    let tls_config = OpenSSLConfig::from_pem_file("cert.pem", "key.pem").await.unwrap();
 
     // create Router with empty state, could be replaced with any type
     let mut router = Router::with_state(());
@@ -41,10 +38,7 @@ async fn main() {
         .default_handle_error();
 
     // setup routes
-    router
-        .get("/{*path}", placeholder)
-        .get("/", placeholder)
-        .get("/hello", placeholder);
+    router.get("/{*path}", placeholder).get("/", placeholder).get("/hello", placeholder);
 
     // create server to bind at localhost:8083, under https
     let mut server = Server::bind("0.0.0.0:8083".parse().unwrap());
@@ -53,19 +47,16 @@ async fn main() {
     server.handle().shutdown_on(async { _ = ctrl_c().await });
 
     // configure the server properties, such as HTTP/2 adaptive window and connect protocol
-    server
-        .http2()
-        .adaptive_window(true)
-        .enable_connect_protocol(); // used for HTTP/2 Websockets
+    server.http2().adaptive_window(true).enable_connect_protocol(); // used for HTTP/2 Websockets
 
-    let service = router.layer(rate_limit);
+    let service = router.route_layer(rate_limit);
 
     // serve the router service with the server
     _ = server
         .acceptor(OpenSSLAcceptor::new(tls_config).acceptor(NoDelayAcceptor))
         .serve(FtlServiceToHyperMakeService::new(
             // Convert the `Incoming` body to FTL Body type and call the service
-            (ConvertBody(()), RealIpLayer, RealIpLayer, RealIpLayer).layer(service),
+            (RealIpLayer,).layer(service),
         ))
         .await;
 }

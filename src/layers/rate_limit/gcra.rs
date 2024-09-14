@@ -36,8 +36,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
     }
 
     fn should_gc(&self) -> bool {
-        self.gc_interval != u64::MAX
-            && 0 == self.last_gc.fetch_add(1, Ordering::Relaxed) % self.gc_interval
+        self.gc_interval != u64::MAX && 0 == self.last_gc.fetch_add(1, Ordering::Relaxed) % self.gc_interval
     }
 
     #[inline]
@@ -48,17 +47,14 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
     /// Cleans up any entries that have not been accessed since the given time.
     pub async fn clean(&self, before: Instant) {
         let before = self.relative(before);
-        self.limits
-            .retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= before)
-            .await;
+        self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= before).await;
         self.last_gc.store(1, Ordering::Relaxed); // manual reset
     }
 
     /// Synchronous version of [`RateLimiter::clean`].
     pub fn clean_sync(&self, before: Instant) {
         let before = self.relative(before);
-        self.limits
-            .retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= before);
+        self.limits.retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= before);
         self.last_gc.store(1, Ordering::Relaxed); // manual reset
     }
 
@@ -66,15 +62,9 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
     pub async fn req(&self, key: K, quota: Quota, now: Instant) -> Result<(), RateLimitError> {
         let now = self.relative(now);
 
-        let Some(res) = self
-            .limits
-            .read_async(&key, |_, gcra| gcra.req(quota, now))
-            .await
-        else {
+        let Some(res) = self.limits.read_async(&key, |_, gcra| gcra.req(quota, now)).await else {
             if self.should_gc() {
-                self.limits
-                    .retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now)
-                    .await;
+                self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now).await;
             }
 
             return match self.limits.entry_async(key).await {
@@ -95,8 +85,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
 
         let Some(res) = self.limits.read(&key, |_, gcra| gcra.req(quota, now)) else {
             if self.should_gc() {
-                self.limits
-                    .retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now);
+                self.limits.retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now);
             }
 
             return match self.limits.entry(key) {
@@ -142,9 +131,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
 
             // since we hit the slow path, perform garbage collection
             if self.should_gc() {
-                self.limits
-                    .retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now)
-                    .await;
+                self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now).await;
             }
 
             return match self.limits.entry_async(key).await {
@@ -179,8 +166,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
     {
         self.limits
             .read_async(key, |_, grca| {
-                grca.0
-                    .fetch_add(penalty.as_nanos() as u64, Ordering::Relaxed)
+                grca.0.fetch_add(penalty.as_nanos() as u64, Ordering::Relaxed)
             })
             .await
             .is_some()
@@ -194,8 +180,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
     {
         self.limits
             .read(key, |_, grca| {
-                grca.0
-                    .fetch_add(penalty.as_nanos() as u64, Ordering::Relaxed)
+                grca.0.fetch_add(penalty.as_nanos() as u64, Ordering::Relaxed)
             })
             .is_some()
     }
@@ -367,9 +352,7 @@ impl Gcra {
 
         if now < next {
             // SAFETY: next > now, so next - now is non-zero by definition
-            Err(RateLimitError(unsafe {
-                NonZeroU64::new_unchecked(next - now)
-            }))
+            Err(RateLimitError(unsafe { NonZeroU64::new_unchecked(next - now) }))
         } else {
             Ok(now.max(prev) + t)
         }
@@ -382,10 +365,7 @@ impl Gcra {
         loop {
             let next = Self::decide(prev, now, quota)?;
 
-            match self
-                .0
-                .compare_exchange_weak(prev, next, Ordering::Release, Ordering::Relaxed)
-            {
+            match self.0.compare_exchange_weak(prev, next, Ordering::Release, Ordering::Relaxed) {
                 Ok(_) => return Ok(()),
                 Err(next_prev) => prev = next_prev,
             }

@@ -12,8 +12,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use openssl::{
     pkey::PKey,
     ssl::{
-        self, AlpnError, Error as OpenSSLError, Ssl, SslAcceptor, SslAcceptorBuilder, SslFiletype,
-        SslMethod, SslRef,
+        self, AlpnError, Error as OpenSSLError, Ssl, SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod,
+        SslRef,
     },
     x509::X509,
 };
@@ -86,9 +86,7 @@ where
 
                 let mut tls_stream = SslStream::new(ssl, stream).map_err(io_other)?;
 
-                poll_fn(|cx| Pin::new(&mut tls_stream).poll_accept(cx))
-                    .await
-                    .map_err(io_other)?;
+                poll_fn(|cx| Pin::new(&mut tls_stream).poll_accept(cx)).await.map_err(io_other)?;
 
                 Ok(tls_stream)
             });
@@ -143,10 +141,7 @@ impl super::TlsConfig for OpenSSLConfig {
     /// This helper will establish a TLS server based on strong cipher suites
     /// from a DER-encoded certificate and key.
     async fn from_der(cert: Self::DerCertChain, key: Vec<u8>) -> Result<Self, OpenSSLError> {
-        let acceptor = Arc::new(ArcSwap::from_pointee(config_from_der(
-            cert.as_ref(),
-            key.as_ref(),
-        )?));
+        let acceptor = Arc::new(ArcSwap::from_pointee(config_from_der(cert.as_ref(), key.as_ref())?));
 
         Ok(OpenSSLConfig { acceptor })
     }
@@ -154,20 +149,14 @@ impl super::TlsConfig for OpenSSLConfig {
     /// This helper will establish a TLS server based on strong cipher suites
     /// from a PEM-formatted certificate and key.
     async fn from_pem(cert: String, key: String) -> Result<Self, OpenSSLError> {
-        let acceptor = Arc::new(ArcSwap::from_pointee(config_from_pem(
-            cert.as_bytes(),
-            key.as_bytes(),
-        )?));
+        let acceptor = Arc::new(ArcSwap::from_pointee(config_from_pem(cert.as_bytes(), key.as_bytes())?));
 
         Ok(OpenSSLConfig { acceptor })
     }
 
     /// This helper will establish a TLS server based on strong cipher suites
     /// from a PEM-formatted certificate and key.
-    async fn from_pem_file(
-        cert: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> Result<Self, OpenSSLError> {
+    async fn from_pem_file(cert: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<Self, OpenSSLError> {
         let acceptor = Arc::new(ArcSwap::from_pointee(config_from_pem_file(cert, key)?));
 
         Ok(OpenSSLConfig { acceptor })
@@ -175,23 +164,14 @@ impl super::TlsConfig for OpenSSLConfig {
 
     /// This helper will establish a TLS server based on strong cipher suites
     /// from a PEM-formatted certificate chain and key.
-    async fn from_pem_chain_file(
-        chain: impl AsRef<Path>,
-        key: impl AsRef<Path>,
-    ) -> Result<Self, OpenSSLError> {
-        let acceptor = Arc::new(ArcSwap::from_pointee(config_from_pem_chain_file(
-            chain, key,
-        )?));
+    async fn from_pem_chain_file(chain: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<Self, OpenSSLError> {
+        let acceptor = Arc::new(ArcSwap::from_pointee(config_from_pem_chain_file(chain, key)?));
 
         Ok(OpenSSLConfig { acceptor })
     }
 
     /// Reload acceptor from a DER-encoded certificate and key.
-    async fn reload_from_der(
-        &self,
-        cert: Self::DerCertChain,
-        key: Vec<u8>,
-    ) -> Result<(), OpenSSLError> {
+    async fn reload_from_der(&self, cert: Self::DerCertChain, key: Vec<u8>) -> Result<(), OpenSSLError> {
         let acceptor = Arc::new(config_from_der(cert.as_ref(), key.as_ref())?);
         self.acceptor.store(acceptor);
 
@@ -303,10 +283,7 @@ fn config_from_pem(cert: &[u8], key: &[u8]) -> Result<SslAcceptor, OpenSSLError>
     Ok(acceptor)
 }
 
-fn config_from_pem_file(
-    cert: impl AsRef<Path>,
-    key: impl AsRef<Path>,
-) -> Result<SslAcceptor, OpenSSLError> {
+fn config_from_pem_file(cert: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<SslAcceptor, OpenSSLError> {
     let mut tls_builder = SslAcceptor::mozilla_modern_v5(SslMethod::tls())?;
     tls_builder.set_certificate_file(cert, SslFiletype::PEM)?;
     tls_builder.set_private_key_file(key, SslFiletype::PEM)?;
