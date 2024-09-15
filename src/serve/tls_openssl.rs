@@ -6,7 +6,7 @@ use std::future::{poll_fn, Future};
 use std::io::ErrorKind;
 use std::pin::Pin;
 use std::time::Duration;
-use std::{fmt, io, net::SocketAddr, path::Path, sync::Arc};
+use std::{fmt, io, path::Path, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use openssl::{

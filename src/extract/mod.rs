@@ -275,6 +275,26 @@ impl IntoResponse for AuthorityRejection {
     }
 }
 
+pub(crate) fn extract_authority(parts: &Parts) -> Result<Authority, AuthorityRejection> {
+    let from_uri = parts.uri.authority();
+
+    let from_header = parts
+        .headers
+        .get(HeaderName::from_static("host"))
+        .ok_or(AuthorityRejection::MissingAuthority)
+        .and_then(|hdr| {
+            Authority::from_str(hdr.to_str().map_err(|_| AuthorityRejection::InvalidAuthority)?)
+                .map_err(|_| AuthorityRejection::InvalidAuthority)
+        });
+
+    match (from_uri, from_header) {
+        (Some(_), Ok(b)) => Ok(b),          // defer to HOST as what the client intended
+        (Some(a), Err(_)) => Ok(a.clone()), // HOST is invalid, but URI is valid
+        (None, Ok(b)) => Ok(b),
+        (None, Err(e)) => Err(e),
+    }
+}
+
 impl<S> FromRequestParts<S> for Authority {
     type Rejection = AuthorityRejection;
 
@@ -282,23 +302,7 @@ impl<S> FromRequestParts<S> for Authority {
         parts: &mut Parts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        let from_uri = parts.uri.authority();
-
-        let from_header = parts
-            .headers
-            .get(HeaderName::from_static("host"))
-            .ok_or(AuthorityRejection::MissingAuthority)
-            .and_then(|hdr| {
-                Authority::from_str(hdr.to_str().map_err(|_| AuthorityRejection::InvalidAuthority)?)
-                    .map_err(|_| AuthorityRejection::InvalidAuthority)
-            });
-
-        futures::future::ready(match (from_uri, from_header) {
-            (Some(_), Ok(b)) => Ok(b),          // defer to HOST as what the client intended
-            (Some(a), Err(_)) => Ok(a.clone()), // HOST is invalid, but URI is valid
-            (None, Ok(b)) => Ok(b),
-            (None, Err(e)) => Err(e),
-        })
+        futures::future::ready(extract_authority(parts))
     }
 }
 

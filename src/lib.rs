@@ -19,6 +19,7 @@ pub mod headers;
 pub mod layers;
 pub mod params;
 pub mod response;
+pub mod rewrite;
 pub mod router;
 pub mod serve;
 pub mod service;

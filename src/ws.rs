@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use headers::{Connection, HeaderMapExt, SecWebsocketAccept, SecWebsocketKey, SecWebsocketVersion, Upgrade};
-use http::{HeaderName, HeaderValue, Method, StatusCode, Version};
+use http::{HeaderValue, Method, StatusCode, Version};
 use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
 use tokio_tungstenite::{

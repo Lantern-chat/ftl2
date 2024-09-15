@@ -1,13 +1,4 @@
-use std::{
-    error::Error,
-    future::Future,
-    marker::PhantomData,
-    ops::Deref,
-    sync::Arc,
-    task::{Context, Poll},
-};
-
-use crate::{response::IntoResponse, Request};
+use std::{error::Error, future::Future, ops::Deref, sync::Arc};
 
 pub trait ServiceFuture<R, E>: Future<Output = Result<R, E>> + Send + 'static {}
 

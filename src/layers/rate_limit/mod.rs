@@ -3,13 +3,10 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     convert::Infallible,
-    error::Error as StdError,
-    future::{Future, Ready},
-    hash::{BuildHasher, Hash},
+    future::Ready,
+    hash::Hash,
     ops::Deref,
-    pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll},
     time::{Duration, Instant},
 };
 

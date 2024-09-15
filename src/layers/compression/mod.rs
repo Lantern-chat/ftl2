@@ -3,14 +3,13 @@ use std::sync::Arc;
 
 use http::header;
 use http_body::Frame;
-use http_body_util::{BodyStream, StreamBody};
+use http_body_util::BodyStream;
 use tokio_stream::StreamExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 pub use async_compression::Level;
 
 use crate::body::Body;
-use crate::error::io_other;
 use crate::headers::accept_encoding::{AcceptEncoding, Encoding};
 use crate::{IntoResponse, Layer, Service};
 

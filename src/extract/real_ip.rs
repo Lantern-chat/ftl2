@@ -11,7 +11,6 @@ use std::{
     net::{IpAddr, SocketAddr},
     ops::Deref,
     str::FromStr,
-    task::{Context, Poll},
 };
 
 use crate::{extract::FromRequestParts, response::IntoResponse, service::ServiceFuture, Layer, Response, Service};

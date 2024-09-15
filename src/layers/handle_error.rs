@@ -1,10 +1,4 @@
-use std::{
-    convert::Infallible,
-    fmt,
-    future::Future,
-    marker::PhantomData,
-    task::{Context, Poll},
-};
+use std::{convert::Infallible, fmt, future::Future, marker::PhantomData};
 
 use crate::{
     extract::FromRequestParts,

@@ -8,11 +8,8 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use std::future::Future;
 use std::io::ErrorKind;
 use std::time::Duration;
-use std::{fmt, io, net::SocketAddr, path::Path, sync::Arc};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    task::spawn_blocking,
-};
+use std::{fmt, io, path::Path, sync::Arc};
+use tokio::task::spawn_blocking;
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
 

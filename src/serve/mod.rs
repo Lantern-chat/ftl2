@@ -8,20 +8,15 @@ pub mod accept;
 
 use core::error::Error;
 
-use futures::{FutureExt, TryFutureExt};
 use hyper::body::Incoming;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
-    server::{
-        conn::auto::{Builder, Http1Builder, Http2Builder},
-        graceful::GracefulShutdown,
-    },
+    server::conn::auto::{Builder, Http1Builder, Http2Builder},
 };
 
 use std::{
-    fmt,
-    future::{poll_fn, Future},
-    io::{self, ErrorKind},
+    future::Future,
+    io::{self},
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -31,18 +26,13 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
     sync::Notify,
 };
 
 use accept::{Accept, DefaultAcceptor};
 
-use crate::{
-    error::{io_other, BoxError},
-    response::IntoResponse,
-    service::{MakeService, Service},
-};
+use crate::service::{MakeService, Service};
 
 #[derive(Debug, Default)]
 struct NotifyOnce {
@@ -141,7 +131,7 @@ impl Handle {
         Watcher(self.clone())
     }
 
-    async fn wait(&self) {
+    async fn wait_internal(&self) {
         if self.0.conn_count.load(Ordering::SeqCst) == 0 {
             return;
         }
@@ -153,6 +143,10 @@ impl Handle {
             _ = self.kill_notified() => {},
             _ = tokio::time::sleep(deadline) => self.kill(),
         }
+    }
+
+    pub async fn wait(&self) {
+        self.kill_notified().await
     }
 }
 
@@ -167,17 +161,17 @@ pub struct Server<A = DefaultAcceptor> {
 
 #[derive(Debug)]
 enum Listener {
-    Bind(SocketAddr),
+    Bind(Vec<SocketAddr>),
     Std(std::net::TcpListener),
 }
 
 impl Server {
     /// Create a server that will bind to provided address.
-    pub fn bind(addr: SocketAddr) -> Self {
+    pub fn bind(addr: impl IntoIterator<Item = SocketAddr>) -> Self {
         Self {
             acceptor: DefaultAcceptor,
             builder: Builder::new(TokioExecutor::new()),
-            listener: Listener::Bind(addr),
+            listener: Listener::Bind(addr.into_iter().collect()),
             handle: Handle::default(),
         }
     }
@@ -189,6 +183,20 @@ impl Server {
             builder: Builder::new(TokioExecutor::new()),
             listener: Listener::Std(listener),
             handle: Handle::default(),
+        }
+    }
+}
+
+impl<A> Server<A>
+where
+    A: Clone,
+{
+    pub fn rebind(&self, addr: impl IntoIterator<Item = SocketAddr>) -> Self {
+        Self {
+            acceptor: self.acceptor.clone(),
+            builder: self.builder.clone(),
+            listener: Listener::Bind(addr.into_iter().collect()),
+            handle: self.handle.clone(),
         }
     }
 }
@@ -268,7 +276,7 @@ impl<A> Server<A> {
 
         // bind or use existing connection
         let incoming = match listener {
-            Listener::Bind(addr) => TcpListener::bind(addr).await,
+            Listener::Bind(addr) => TcpListener::bind(&*addr).await,
             Listener::Std(std_listener) => {
                 std_listener.set_nonblocking(true)?;
                 TcpListener::from_std(std_listener)
@@ -316,10 +324,14 @@ impl<A> Server<A> {
                     }),
                 ));
 
+                println!("HERE");
+
                 tokio::select! {
                     biased;
                     _ = watcher.0.shutdown_notified() => {
                         conn.as_mut().graceful_shutdown();
+
+                        println!("Shutdown received");
 
                         tokio::select! {
                             biased;
@@ -334,7 +346,7 @@ impl<A> Server<A> {
 
         drop(incoming);
 
-        handle.wait().await;
+        handle.wait_internal().await;
 
         Ok(())
     }
