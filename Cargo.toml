@@ -16,7 +16,7 @@ tracing = { version = "0.1", default-features = false, features = ["log", "std"]
 tokio = { version = "1", features = ["macros", "net", "sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tokio-stream = "0.1.14"
-tokio-tungstenite = "0.23"
+tokio-tungstenite = "0.24"
 
 http = "1.1.0"
 http-body = "1.0.1"
@@ -30,6 +30,7 @@ paste = "1.0.15"
 headers = "0.4.0"
 percent-encoding = "2.3.1"
 rustc-hash = { version = "2.0.0", features = ["rand"] }
+itoa = "1.0.11"
 # serde = { version = "1.0.210", default-features = false }
 
 tower-layer = "0.3"
@@ -50,18 +51,16 @@ tokio-openssl = { version = "0.6", optional = true }
 scc = { version = "2", optional = true }
 ahash = { version = "0.8", optional = true }
 
-itoa = { version = "1.0.11", optional = true }
-
 async-compression = { version = "0.4", optional = true, default-features = false, features = ["tokio"] }
 aho-corasick = { version = "1.1.3", optional = true }
 
 [features]
-default = ["tls-rustls", "tower-service", "tls-openssl", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]
+default = ["tls-rustls", "gcra", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]
 tls-rustls = ["tls-rustls-no-provider", "rustls/aws-lc-rs"]
 tls-rustls-no-provider = ["arc-swap", "rustls", "rustls-pemfile", "tokio/fs", "tokio/time", "tokio-rustls", "rustls-pki-types"]
-tls-openssl = ["arc-swap", "openssl", "tokio-openssl", "dep:itoa"]
+tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
 tower-service = ["dep:tower-service"]
-gcra = ["dep:scc", "dep:ahash", "dep:itoa"]
+gcra = ["dep:scc", "dep:ahash"]
 
 compression-br = ["_meta_compression", "async-compression/brotli"]
 compression-deflate = ["_meta_compression", "async-compression/deflate"]

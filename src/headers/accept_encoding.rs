@@ -180,10 +180,10 @@ impl Encoding {
             .map(|(encoding, _)| encoding)
     }
 
-    pub(crate) fn encodings<'a>(
-        headers: &'a http::HeaderMap,
+    pub(crate) fn encodings(
+        headers: &http::HeaderMap,
         supported_encoding: AcceptEncoding,
-    ) -> impl Iterator<Item = (Encoding, qvalue::QValue)> + 'a {
+    ) -> impl Iterator<Item = (Encoding, qvalue::QValue)> + '_ {
         headers
             .get_all(http::header::ACCEPT_ENCODING)
             .iter()

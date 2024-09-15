@@ -9,9 +9,10 @@ use ftl::{
     router::Router,
     serve::{
         accept::NoDelayAcceptor,
-        tls_openssl::{OpenSSLAcceptor, OpenSSLConfig},
+        // tls_openssl::{OpenSSLAcceptor, OpenSSLConfig},
         tls_rustls::{RustlsAcceptor, RustlsConfig},
-        Server, TlsConfig,
+        Server,
+        TlsConfig,
     },
     service::FtlServiceToHyperMakeService,
     Layer,
