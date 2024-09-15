@@ -324,14 +324,10 @@ impl<A> Server<A> {
                     }),
                 ));
 
-                println!("HERE");
-
                 tokio::select! {
                     biased;
                     _ = watcher.0.shutdown_notified() => {
                         conn.as_mut().graceful_shutdown();
-
-                        println!("Shutdown received");
 
                         tokio::select! {
                             biased;
