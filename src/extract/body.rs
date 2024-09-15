@@ -116,6 +116,10 @@ fn body_error_to_response(err: BodyError) -> Response {
             format!("An error occurred while reading the body: {e}").into(),
             StatusCode::INTERNAL_SERVER_ERROR,
         ),
+        BodyError::Io(e) => (
+            format!("An error occurred while reading the body: {e}").into(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
 
         BodyError::StreamAborted => (
             Cow::Borrowed("The body stream was aborted"),

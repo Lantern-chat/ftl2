@@ -7,3 +7,6 @@ pub mod handle_error;
 
 #[cfg(feature = "gcra")]
 pub mod rate_limit;
+
+#[cfg(feature = "_meta_compression")]
+pub mod compression;

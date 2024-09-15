@@ -5,6 +5,8 @@ use crate::{extract::FromRequestParts, response::IntoResponseParts, IntoResponse
 use headers::{Header as HeaderType, HeaderMapExt};
 use http::{request::Parts, StatusCode};
 
+pub mod accept_encoding;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Header<H: HeaderType>(pub H);

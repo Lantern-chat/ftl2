@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use ftl::{
     extract::{real_ip::RealIpPrivacyMask, Extension, MatchedPath},
-    layers::rate_limit::{gcra::Quota, RateLimitLayerBuilder},
+    layers::{
+        compression::CompressionLayer,
+        rate_limit::{gcra::Quota, RateLimitLayerBuilder},
+    },
     router::Router,
     serve::{
         accept::NoDelayAcceptor,
@@ -25,7 +28,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     // load tls config from pem files
-    let tls_config = OpenSSLConfig::from_pem_file("cert.pem", "key.pem").await.unwrap();
+    let tls_config = RustlsConfig::from_pem_file("cert.pem", "key.pem").await.unwrap();
 
     // create Router with empty state, could be replaced with any type
     let mut router = Router::with_state(());
@@ -53,10 +56,10 @@ async fn main() {
 
     // serve the router service with the server
     _ = server
-        .acceptor(OpenSSLAcceptor::new(tls_config).acceptor(NoDelayAcceptor))
+        .acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor))
         .serve(FtlServiceToHyperMakeService::new(
             // Convert the `Incoming` body to FTL Body type and call the service
-            (RealIpLayer,).layer(service),
+            (RealIpLayer, CompressionLayer::new()).layer(service),
         ))
         .await;
 }
@@ -67,5 +70,7 @@ async fn placeholder(
     Extension(real_ip): Extension<RealIp>,
     _body: ftl::body::Body,
 ) -> String {
-    format!("Matched: {}: {} from {}", p.0, uri.path(), real_ip)
+    let long = "Hello".repeat(1000);
+
+    format!("Matched: {}: {} from {}\n\n{long}", p.0, uri.path(), real_ip)
 }

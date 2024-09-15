@@ -17,6 +17,12 @@ pub trait IntoResponse {
     fn into_response(self) -> Response;
 }
 
+impl IntoResponse for std::io::Error {
+    fn into_response(self) -> Response {
+        IntoResponse::into_response((self.to_string(), StatusCode::INTERNAL_SERVER_ERROR))
+    }
+}
+
 impl IntoResponseParts for () {
     #[inline]
     fn into_response_parts(self, _parts: &mut Parts) {}

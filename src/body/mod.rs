@@ -45,6 +45,9 @@ pub enum BodyError {
     #[error("Hyper error: {0}")]
     HyperError(#[from] hyper::Error),
 
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("Stream Aborted")]
     StreamAborted,
 
