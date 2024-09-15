@@ -246,19 +246,55 @@ where
             });
 
             let compressed = match encoding {
-                Encoding::Gzip => Body::stream(
-                    ReaderStream::new(GzipEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
-                ),
+                Encoding::Identity => unreachable!(),
                 Encoding::Deflate => Body::stream(
                     ReaderStream::new(DeflateEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
                 ),
-                Encoding::Brotli => Body::stream(
-                    ReaderStream::new(BrotliEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
+                Encoding::Gzip => Body::stream(
+                    ReaderStream::new(GzipEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
                 ),
-                Encoding::Zstd => Body::stream(
-                    ReaderStream::new(ZstdEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
-                ),
-                Encoding::Identity => unreachable!(),
+                Encoding::Brotli => Body::stream({
+                    // The brotli crate used under the hood here has a default compression level of 11,
+                    // which is the max for brotli. This causes extremely slow compression times, so we
+                    // manually set a default of 4 here.
+                    //
+                    // This is the same default used by NGINX for on-the-fly brotli compression.
+                    let level = match layer.level {
+                        Level::Default => Level::Precise(4),
+                        level => level,
+                    };
+
+                    ReaderStream::new(BrotliEncoder::with_quality(stream, level)).map(map).chain(trailers)
+                }),
+                Encoding::Zstd => Body::stream({
+                    // See https://issues.chromium.org/issues/41493659:
+                    //  "For memory usage reasons, Chromium limits the window size to 8MB"
+                    // See https://datatracker.ietf.org/doc/html/rfc8878#name-window-descriptor
+                    //  "For improved interoperability, it's recommended for decoders to support values
+                    //  of Window_Size up to 8 MB and for encoders not to generate frames requiring a
+                    //  Window_Size larger than 8 MB."
+                    // Level 17 in zstd (as of v1.5.6) is the first level with a window size of 8 MB (2^23):
+                    // https://github.com/facebook/zstd/blob/v1.5.6/lib/compress/clevels.h#L25-L51
+                    // Set the parameter for all levels >= 17. This will either have no effect (but reduce
+                    // the risk of future changes in zstd) or limit the window log to 8MB.
+                    let needs_window_limit = match layer.level {
+                        Level::Best => true, // 20
+                        Level::Precise(level) => level >= 17,
+                        _ => false,
+                    };
+
+                    // The parameter is not set for levels below 17 as it will increase the window size
+                    // for those levels.
+                    let params: &[_] = if needs_window_limit {
+                        &[async_compression::zstd::CParameter::window_log(23)]
+                    } else {
+                        &[]
+                    };
+
+                    ReaderStream::new(ZstdEncoder::with_quality_and_params(stream, layer.level, params))
+                        .map(map)
+                        .chain(trailers)
+                }),
             };
 
             parts.headers.remove(header::ACCEPT_RANGES);
