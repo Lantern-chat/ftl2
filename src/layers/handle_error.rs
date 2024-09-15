@@ -106,10 +106,10 @@ where
 
 impl<S, F, B, Fut, Res> Service<Request<B>> for HandleError<S, F, ()>
 where
-    S: Service<Request<B>> + Clone,
+    S: Service<Request<B>>,
     S::Response: IntoResponse + Send,
     S::Error: Send,
-    F: FnOnce(S::Error) -> Fut + Clone + Send + Sync + 'static,
+    F: FnOnce(S::Error) -> Fut + Clone + Send + Sync, // TODO: Revisit this, could be Fn() without Clone
     Fut: Future<Output = Res> + Send,
     Res: IntoResponse,
     B: Send + 'static,
@@ -118,13 +118,10 @@ where
     type Error = Infallible;
 
     fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        let f = self.f.clone();
-        let inner = self.inner.clone();
-
         async move {
-            match inner.call(req).await {
+            match self.inner.call(req).await {
                 Ok(res) => Ok(res.into_response()),
-                Err(err) => Ok(f(err).await.into_response()),
+                Err(err) => Ok((self.f.clone())(err).await.into_response()),
             }
         }
     }
@@ -139,7 +136,7 @@ macro_rules! impl_service {
             S: Service<Request<B>> + Clone,
             S::Response: IntoResponse + Send,
             S::Error: Send,
-            F: FnOnce($($ty),*, S::Error) -> Fut + Clone + Send + Sync + 'static,
+            F: FnOnce($($ty),*, S::Error) -> Fut + Clone + Send + Sync,
             Fut: Future<Output = Res> + Send,
             Res: IntoResponse,
             $( $ty: FromRequestParts<()>,)*
@@ -150,9 +147,6 @@ macro_rules! impl_service {
 
             #[allow(non_snake_case)]
             fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-                let f = self.f.clone();
-                let inner = self.inner.clone();
-
                 async move {
                     let (mut parts, body) = req.into_parts();
 
@@ -165,9 +159,9 @@ macro_rules! impl_service {
 
                     let req = Request::from_parts(parts, body);
 
-                    match inner.call(req).await {
+                    match self.inner.call(req).await {
                         Ok(res) => Ok(res.into_response()),
-                        Err(err) => Ok(f($($ty),*, err).await.into_response()),
+                        Err(err) => Ok((self.f.clone())($($ty),*, err).await.into_response()),
                     }
                 }
             }

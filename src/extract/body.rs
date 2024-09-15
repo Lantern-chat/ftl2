@@ -3,6 +3,7 @@ use std::{borrow::Cow, convert::Infallible, future::Future};
 use bytes::{Buf, Bytes, BytesMut};
 use http::StatusCode;
 use http_body_util::{BodyExt, BodyStream, Collected};
+use std::future::ready;
 
 use crate::{
     body::{Body, BodyError},
@@ -14,7 +15,7 @@ impl<S> FromRequest<S> for BodyStream<Body> {
     type Rejection = Infallible;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move { Ok(BodyStream::new(req.body_mut().take())) }
+        ready(Ok(BodyStream::new(req.body_mut().take())))
     }
 }
 

@@ -259,9 +259,11 @@ impl<A> Server<A> {
         // M "creates" a service under the given client address
         M: MakeService<SocketAddr, http::Request<Incoming>>,
         A: Clone + Accept<TcpStream, M::Service, Stream: 'static>,
+        M::Service: 'static,
         // The acceptor maps `M::Service` to its own service type.
-        A::Service:
-            Service<http::Request<Incoming>, Response = http::Response<B>, Error: Error + Send + Sync + 'static>,
+        A::Service: 'static
+            + Clone
+            + Service<http::Request<Incoming>, Response = http::Response<B>, Error: Error + Send + Sync + 'static>,
         // Body requirements
         B: http_body::Body<Data: Send, Error: Error + Send + Sync + 'static> + Send + 'static,
     {
@@ -317,10 +319,12 @@ impl<A> Server<A> {
 
                 let mut conn = std::pin::pin!(builder.serve_connection_with_upgrades(
                     TokioIo::new(stream),
-                    hyper::service::service_fn(|mut req| {
+                    hyper::service::service_fn(move |mut req| {
                         req.extensions_mut().insert(socket_addr);
 
-                        service.call(req)
+                        let service = service.clone();
+
+                        async move { service.call(req).await }
                     }),
                 ));
 

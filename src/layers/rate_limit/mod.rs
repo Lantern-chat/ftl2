@@ -490,7 +490,7 @@ where
 
 impl<I, K, B> Service<Request<B>> for RateLimitService<I, K>
 where
-    I: Service<Request<B>> + Clone + Send + 'static,
+    I: Service<Request<B>> + Send,
     K: Key + FromRequestParts<()>,
     B: Send + 'static,
 {
@@ -508,9 +508,6 @@ where
 
         let (mut parts, body) = req.into_parts();
 
-        let inner = self.inner.clone();
-        let layer = self.layer.clone();
-
         async move {
             let key = RouteWithKey {
                 key: get_user_key(&mut parts).await.map_err(Error::KeyRejection)?,
@@ -518,10 +515,10 @@ where
                 method: parts.method.clone(),
             };
 
-            let res = layer.req_peek_key(key, now, |key| {
-                if let Some(ref set_ext) = layer.builder.set_ext {
+            let res = self.layer.req_peek_key(key, now, |key| {
+                if let Some(ref set_ext) = self.layer.builder.set_ext {
                     // set_extension will clone the key internally
-                    set_ext.set_extension(&mut parts.extensions, key, layer.clone());
+                    set_ext.set_extension(&mut parts.extensions, key, self.layer.clone());
                 }
             });
 
@@ -529,7 +526,7 @@ where
                 return Err(Error::RateLimit(e));
             }
 
-            inner.call(Request::from_parts(parts, body)).await.map_err(Error::Inner)
+            self.inner.call(Request::from_parts(parts, body)).await.map_err(Error::Inner)
         }
     }
 }

@@ -194,14 +194,12 @@ where
 
         let inner = self.inner.call(req);
 
-        let layer = self.layer.clone();
-
         async move {
             let (mut parts, body) = inner.await?.into_parts();
 
             let should_compress = !parts.headers.contains_key(header::CONTENT_ENCODING)
                 && !parts.headers.contains_key(header::CONTENT_RANGE)
-                && layer.predicate.should_compress(&parts);
+                && self.layer.predicate.should_compress(&parts);
 
             if should_compress {
                 parts.headers.append(header::VARY, header::ACCEPT_ENCODING.into());
@@ -247,10 +245,14 @@ where
             let compressed = match encoding {
                 Encoding::Identity => unreachable!(),
                 Encoding::Deflate => Body::stream(
-                    ReaderStream::new(DeflateEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
+                    ReaderStream::new(DeflateEncoder::with_quality(stream, self.layer.level))
+                        .map(map)
+                        .chain(trailers),
                 ),
                 Encoding::Gzip => Body::stream(
-                    ReaderStream::new(GzipEncoder::with_quality(stream, layer.level)).map(map).chain(trailers),
+                    ReaderStream::new(GzipEncoder::with_quality(stream, self.layer.level))
+                        .map(map)
+                        .chain(trailers),
                 ),
                 Encoding::Brotli => Body::stream({
                     // The brotli crate used under the hood here has a default compression level of 11,
@@ -258,7 +260,7 @@ where
                     // manually set a default of 4 here.
                     //
                     // This is the same default used by NGINX for on-the-fly brotli compression.
-                    let level = match layer.level {
+                    let level = match self.layer.level {
                         Level::Default => Level::Precise(4),
                         level => level,
                     };
@@ -276,7 +278,7 @@ where
                     // https://github.com/facebook/zstd/blob/v1.5.6/lib/compress/clevels.h#L25-L51
                     // Set the parameter for all levels >= 17. This will either have no effect (but reduce
                     // the risk of future changes in zstd) or limit the window log to 8MB.
-                    let needs_window_limit = match layer.level {
+                    let needs_window_limit = match self.layer.level {
                         Level::Best => true, // 20
                         Level::Precise(level) => level >= 17,
                         _ => false,
@@ -290,7 +292,7 @@ where
                         &[]
                     };
 
-                    ReaderStream::new(ZstdEncoder::with_quality_and_params(stream, layer.level, params))
+                    ReaderStream::new(ZstdEncoder::with_quality_and_params(stream, self.layer.level, params))
                         .map(map)
                         .chain(trailers)
                 }),

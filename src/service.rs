@@ -1,10 +1,10 @@
 use std::{error::Error, future::Future, ops::Deref, sync::Arc};
 
-pub trait ServiceFuture<R, E>: Future<Output = Result<R, E>> + Send + 'static {}
+pub trait ServiceFuture<R, E>: Future<Output = Result<R, E>> + Send {}
 
-impl<T, R, E> ServiceFuture<R, E> for T where T: Future<Output = Result<R, E>> + Send + 'static {}
+impl<T, R, E> ServiceFuture<R, E> for T where T: Future<Output = Result<R, E>> + Send {}
 
-pub trait Service<Req>: Send + Sync + 'static {
+pub trait Service<Req>: Send + Sync {
     type Response;
     type Error: Send + 'static;
 
@@ -29,7 +29,7 @@ pub trait Service<Req>: Send + Sync + 'static {
 
 impl<R, T> Service<R> for T
 where
-    T: Deref<Target: Service<R>> + Send + Sync + 'static,
+    T: Deref<Target: Service<R>> + Send + Sync,
 {
     type Response = <<T as Deref>::Target as Service<R>>::Response;
     type Error = <<T as Deref>::Target as Service<R>>::Error;
@@ -67,7 +67,7 @@ pub struct MapServiceRequest<S, F> {
 impl<S, F, Req1, Req2> Service<Req1> for MapServiceRequest<S, F>
 where
     S: Service<Req2>,
-    F: Fn(Req1) -> Req2 + Send + Sync + 'static,
+    F: Fn(Req1) -> Req2 + Send + Sync,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -85,13 +85,11 @@ impl<S, F> MapServiceRequest<S, F> {
 
 #[derive(Clone)]
 #[repr(transparent)]
-pub struct FtlServiceToHyperMakeService<S>(Arc<S>)
-where
-    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send;
+pub struct FtlServiceToHyperMakeService<S>(Arc<S>);
 
 impl<S> FtlServiceToHyperMakeService<S>
 where
-    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send,
+    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send + 'static,
 {
     pub fn new(service: S) -> Self {
         Self(Arc::new(service))
@@ -100,7 +98,7 @@ where
 
 impl<S, Target> MakeService<Target, http::Request<hyper::body::Incoming>> for FtlServiceToHyperMakeService<S>
 where
-    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send,
+    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send + 'static,
 {
     type Service = Arc<S>;
 

@@ -290,7 +290,7 @@ where
                 match_.value
             }
             Err(Some(fallback)) => fallback,
-            Err(None) => return Either::Right(NotFound),
+            Err(None) => return Either::Right(std::future::ready(Ok(StatusCode::NOT_FOUND.into_response()))),
         };
 
         Either::Left(route.service.call(Request::from_parts(parts, Body::from_any_body(body))))
@@ -362,18 +362,5 @@ fn set_content_length(size_hint: http_body::SizeHint, headers: &mut HeaderMap) {
         };
 
         headers.insert(header::CONTENT_LENGTH, header_value);
-    }
-}
-
-struct NotFound;
-
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-impl Future for NotFound {
-    type Output = Result<Response, Infallible>;
-
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Ready(Ok(StatusCode::NOT_FOUND.into_response()))
     }
 }
