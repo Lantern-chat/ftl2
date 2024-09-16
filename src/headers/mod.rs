@@ -53,6 +53,7 @@ impl<H> IntoResponseParts for Header<H>
 where
     H: HeaderType,
 {
+    #[inline]
     fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.headers.typed_insert(self.0);
     }

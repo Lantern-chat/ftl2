@@ -11,34 +11,12 @@ use tokio::sync::mpsc;
 
 use http_body_util::{Full, StreamBody};
 use tokio_stream::wrappers::ReceiverStream;
-use tower_layer::Layer;
 
-use crate::{service::ServiceFuture, Request, Service};
+#[cfg(feature = "json")]
+mod json;
 
-pub struct ConvertBody<S>(pub S);
-
-impl<S> Layer<S> for ConvertBody<()> {
-    type Service = ConvertBody<S>;
-
-    fn layer(&self, service: S) -> Self::Service {
-        ConvertBody(service)
-    }
-}
-
-impl<S, B> Service<http::Request<B>> for ConvertBody<S>
-where
-    S: Service<Request>,
-    B: http_body::Body<Data = Bytes, Error: Error + Send + Sync + 'static> + Send + 'static,
-{
-    type Error = S::Error;
-    type Response = S::Response;
-
-    fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        let (parts, body) = req.into_parts();
-
-        self.0.call(http::Request::from_parts(parts, Body::from_any_body(body)))
-    }
-}
+#[cfg(feature = "json")]
+pub use json::Json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {

@@ -1,5 +1,5 @@
 #![warn(clippy::perf, clippy::style, clippy::must_use_candidate)]
-#![allow(clippy::manual_async_fn, unused_imports)]
+#![allow(clippy::manual_async_fn)]
 
 extern crate tracing as log;
 
@@ -38,3 +38,11 @@ pub use tower_layer::Layer;
 
 #[cfg(feature = "tower-service")]
 pub mod tower;
+
+// sonic-rs advertises itself as being faster only on x86_64 and aarch64, so we
+// use it on those platforms. Otherwise, we use serde_json.
+#[cfg(all(feature = "json-simd", any(target_arch = "x86_64", target_arch = "aarch64")))]
+extern crate sonic_rs as json_impl;
+
+#[cfg(not(all(feature = "json-simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+extern crate serde_json as json_impl;

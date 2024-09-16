@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::error::Error;
-use std::future::Future;
 use std::sync::{Arc, LazyLock};
 
 use futures::FutureExt;

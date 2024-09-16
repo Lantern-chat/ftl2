@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use ftl::{
+    body::Json,
     extract::{real_ip::RealIpPrivacyMask, Extension, MatchedPath},
     layers::{
         compression::CompressionLayer,
@@ -16,11 +17,12 @@ use ftl::{
         TlsConfig,
     },
     service::FtlServiceToHyperMakeService,
-    Layer,
+    IntoResponse, Layer,
 };
 
 use ftl::extract::real_ip::{RealIp, RealIpLayer};
 
+use futures::StreamExt;
 use tokio::signal::ctrl_c;
 
 type RateLimitKey = (RealIpPrivacyMask,); // note there can be multiple keys, but for this example we only use the IP address
@@ -44,7 +46,11 @@ async fn main() {
         .default_handle_error();
 
     // setup routes
-    router.get("/{*path}", placeholder).get("/", placeholder).get("/hello", placeholder);
+    router
+        .get("/{*path}", placeholder)
+        .get("/", placeholder)
+        .get("/hello", placeholder)
+        .get("/test", test);
 
     // create server to bind at localhost:8083, under https
     let mut server = Server::bind(["0.0.0.0:8083".parse().unwrap()]);
@@ -94,4 +100,27 @@ async fn placeholder(
     let long = "Hello".repeat(100000);
 
     format!("Matched: {}: {} from {}\n\n{long}", p.0, uri.path(), real_ip)
+}
+
+use serde::Serialize;
+
+async fn test() -> impl IntoResponse {
+    #[derive(Serialize)]
+    struct Test {
+        a: i32,
+        b: String,
+    }
+
+    let mut i = 0;
+
+    Json::stream_simple_array(
+        futures::stream::repeat_with(move || Test {
+            a: {
+                i += 1;
+                i
+            },
+            b: "test".to_string(),
+        })
+        .take(100),
+    )
 }

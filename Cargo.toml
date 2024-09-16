@@ -54,8 +54,19 @@ ahash = { version = "0.8", optional = true }
 async-compression = { version = "0.4", optional = true, default-features = false, features = ["tokio"] }
 aho-corasick = { version = "1.1.3", optional = true }
 
+# JSON
+serde_json = { version = "1", optional = true }
+serde = { version = "1", optional = true }
+v_jsonescape = { version = "0.7", optional = true }
+
+# JSON SIMD
+sonic-rs = { version = "0.3", optional = true }
+
+# CBOR
+ciborium = { version = "0.2", optional = true }
+
 [features]
-default = ["tls-rustls", "gcra", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]
+default = ["tls-rustls", "gcra", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd", "json", "cbor"]
 tls-rustls = ["tls-rustls-no-provider", "rustls/aws-lc-rs"]
 tls-rustls-no-provider = ["arc-swap", "rustls", "rustls-pemfile", "tokio/fs", "tokio/time", "tokio-rustls", "rustls-pki-types"]
 tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
@@ -69,7 +80,13 @@ compression-zstd = ["_meta_compression", "async-compression/zstd"]
 
 _meta_compression = ["aho-corasick"]
 
+json = ["serde", "serde_json", "v_jsonescape"]
+json-simd = ["json", "sonic-rs"]
+
+cbor = ["ciborium"]
+
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5.2", features = ["trace", "compression-gzip", "compression-deflate", "compression-br", "compression-zstd"] }
 tracing-subscriber = "0.3.18"

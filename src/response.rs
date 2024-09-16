@@ -6,14 +6,71 @@ use http::{
 use std::{borrow::Cow, convert::Infallible};
 
 pub use crate::{body::Body, Response, ResponseParts};
+use crate::{extract::Extension, headers::Header};
 
 pub trait IntoResponseParts {
     fn into_response_parts(self, parts: &mut ResponseParts);
+
+    /// Include an extra part to the response parts.
+    #[inline]
+    fn with<T: IntoResponseParts>(self, part: T) -> (Self, T)
+    where
+        Self: Sized,
+    {
+        (self, part)
+    }
+
+    /// Set the status code of the response.
+    #[inline]
+    fn with_status(self, status: StatusCode) -> (Self, StatusCode)
+    where
+        Self: Sized,
+    {
+        (self, status)
+    }
+
+    /// Append a typed header to the response.
+    #[inline]
+    fn with_header<H>(self, header: H) -> (Self, Header<H>)
+    where
+        Self: Sized,
+        H: headers::Header,
+    {
+        (self, Header(header))
+    }
 }
 
 pub trait IntoResponse {
     #[must_use]
     fn into_response(self) -> Response;
+
+    /// Include an extra part to the response.
+    #[inline]
+    fn with<T: IntoResponseParts>(self, part: T) -> (Self, T)
+    where
+        Self: Sized,
+    {
+        (self, part)
+    }
+
+    /// Set the status code of the response.
+    #[inline]
+    fn with_status(self, status: StatusCode) -> (Self, StatusCode)
+    where
+        Self: Sized,
+    {
+        (self, status)
+    }
+
+    /// Append a typed header to the response.
+    #[inline]
+    fn with_header<H>(self, header: H) -> (Self, Header<H>)
+    where
+        Self: Sized,
+        H: headers::Header,
+    {
+        (self, Header(header))
+    }
 }
 
 impl IntoResponse for std::io::Error {
@@ -38,6 +95,16 @@ impl IntoResponseParts for Extensions {
     #[inline]
     fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.extensions.extend(self);
+    }
+}
+
+impl<T> IntoResponseParts for Extension<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    #[inline]
+    fn into_response_parts(self, parts: &mut ResponseParts) {
+        parts.extensions.insert(self.0);
     }
 }
 
@@ -286,5 +353,12 @@ impl<const N: usize> IntoResponse for &'static [u8; N] {
     #[inline]
     fn into_response(self) -> Response {
         self.as_slice().into_response()
+    }
+}
+
+impl IntoResponse for crate::body::Body {
+    #[inline]
+    fn into_response(self) -> Response {
+        Response::new(self)
     }
 }

@@ -115,10 +115,31 @@ macro_rules! impl_from_request {
 
 all_the_tuples!(impl_from_request);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct State<S>(pub S);
+
+impl<S> Deref for State<S> {
+    type Target = S;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Extension<E>(pub E);
+
+impl<E> Deref for Extension<E> {
+    type Target = E;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl<S> FromRequestParts<S> for State<S>
 where
