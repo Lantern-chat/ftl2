@@ -9,9 +9,9 @@ use tokio_util::io::{ReaderStream, StreamReader};
 
 pub use async_compression::Level;
 
-use crate::body::Body;
+use crate::body::{Body, BodyError};
 use crate::headers::accept_encoding::{AcceptEncoding, Encoding};
-use crate::{IntoResponse, Layer, Service};
+use crate::{Layer, Service};
 
 pub mod predicate;
 
@@ -149,33 +149,6 @@ where
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum CompressionError<E> {
-    #[error(transparent)]
-    Inner(E),
-
-    #[error("io error: {0}")]
-    Io(#[from] io::Error),
-
-    #[error("other error")]
-    Other,
-}
-
-impl<E> IntoResponse for CompressionError<E>
-where
-    E: IntoResponse,
-{
-    fn into_response(self) -> crate::Response {
-        match self {
-            CompressionError::Inner(e) => e.into_response(),
-            CompressionError::Io(e) => e.into_response(),
-            CompressionError::Other => {
-                ("Internal Server Error", http::StatusCode::INTERNAL_SERVER_ERROR).into_response()
-            }
-        }
-    }
-}
-
 impl<S, P, ReqBody, RespBody> Service<http::Request<ReqBody>> for Compression<S, P>
 where
     S: Service<http::Request<ReqBody>, Response = http::Response<RespBody>>,
@@ -225,22 +198,26 @@ where
                 }),
             }));
 
-            use async_compression::tokio::bufread::{BrotliEncoder, DeflateEncoder, GzipEncoder, ZstdEncoder};
-
-            let map = move |r| match r {
+            let map = move |r: Result<_, io::Error>| match r {
                 Ok(data) => Ok(Frame::data(data)),
-                Err(e) => Err(crate::body::BodyError::Io(e)),
-                // Err(e) => match e.downcast::<<B as http_body::Body>::Error>() {
-                //     Ok(e) => Err(CompressionError::Inner(e)),
-                //     Err(e) => Err(CompressionError::Io(e)),
-                // },
+                Err(e) => match e.downcast::<<RespBody as http_body::Body>::Error>() {
+                    // TODO: Handle internal body errors better?
+                    Ok(e) => Err(BodyError::Generic(e.into())),
+                    Err(e) => Err(BodyError::Io(e)),
+                },
             };
 
-            let trailers = futures::stream::unfold(orig_trailers, |ot| async move {
+            let trailers = futures::stream::unfold((false, orig_trailers), move |(checked, ot)| async move {
+                if checked {
+                    return None; // don't bother locking if we've already yielded the trailers
+                }
+
                 let trailers = ot.lock().unwrap().take();
 
-                trailers.map(|trailers| (Ok(trailers), ot))
+                trailers.map(|trailers| (Ok(trailers), (true, ot)))
             });
+
+            use async_compression::tokio::bufread::{BrotliEncoder, DeflateEncoder, GzipEncoder, ZstdEncoder};
 
             let compressed = match encoding {
                 Encoding::Identity => unreachable!(),
