@@ -63,6 +63,11 @@ pub mod body;
 pub mod path;
 pub mod real_ip;
 
+#[cfg(feature = "json")]
+mod json;
+#[cfg(feature = "json")]
+pub use json::Json;
+
 pub use body::{CollectedBytes, Limited};
 pub use path::Path;
 

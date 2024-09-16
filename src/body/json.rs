@@ -4,34 +4,34 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use headers::ContentType;
 use http::StatusCode;
+use http_body_util::Full;
 use hyper::body::Frame;
 
 use super::Body;
 
+/// A wrapper around a value that can be (de)serialized to JSON.
+///
+/// As a response, use `Json(value)` (lazy) or [`Json::try_new(value)`](Json::try_new) (immediate) to serialize the
+/// value to JSON. If an error occurs while encoding the JSON, the response will be an internal
+/// server error or the error returned by `Json::try_new`.
+///
+/// Within a request handler, use `fn my_handler(Json(value): Json<MyType>)` to extract the value from
+/// the request body. If the body is not valid JSON, the request will be rejected with a bad request error.
+///
+/// Use [`Json::stream_array`] or [`Json::stream_map`] to stream large JSON arrays or maps without
+/// needing to hold the entire array or map in memory. There are also [`Json::stream_simple_array`]
+/// and [`Json::stream_simple_map`] for streams that don't yield results.
 #[must_use]
-#[derive(Clone)]
-pub struct Json {
-    inner: Result<Bytes, ()>,
-}
+#[derive(Clone, Debug)]
+#[repr(transparent)]
+pub struct Json<T>(pub T);
 
-impl Json {
-    pub fn new<T: serde::Serialize>(value: T) -> Json {
-        match Self::try_new(value) {
-            Ok(resp) => resp,
-            Err(e) => {
-                log::error!("JSON Reply error: {e}");
-                Json { inner: Err(()) }
-            }
+impl Json<()> {
+    pub fn try_new<T: serde::Serialize>(value: T) -> Result<Full<Bytes>, json_impl::Error> {
+        match json_impl::to_vec(&value) {
+            Ok(v) => Ok(Full::new(Bytes::from(v))),
+            Err(e) => Err(e),
         }
-    }
-
-    pub fn try_new<T: serde::Serialize>(value: T) -> Result<Json, json_impl::Error> {
-        Ok(Json {
-            inner: match json_impl::to_vec(&value) {
-                Ok(v) => Ok(Bytes::from(v)),
-                Err(e) => return Err(e),
-            },
-        })
     }
 
     /// Stream a JSON array. This is useful for streaming large JSON arrays
@@ -86,12 +86,18 @@ impl Json {
     }
 }
 
-impl IntoResponse for Json {
+impl<T> IntoResponse for Json<T>
+where
+    T: serde::Serialize,
+{
     fn into_response(self) -> Response {
-        match self.inner {
-            Ok(body) => Response::new(Body::from(body)).with_header(ContentType::json()).into_response(),
+        match Json::try_new(self.0) {
+            Ok(body) => Body::from(body).with_header(ContentType::json()).into_response(),
 
-            Err(()) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Err(e) => {
+                log::error!("JSON Response error: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
         }
     }
 }

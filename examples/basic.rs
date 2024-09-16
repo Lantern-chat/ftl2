@@ -102,13 +102,11 @@ async fn placeholder(
     format!("Matched: {}: {} from {}\n\n{long}", p.0, uri.path(), real_ip)
 }
 
-use serde::Serialize;
-
 async fn test() -> impl IntoResponse {
-    #[derive(Serialize)]
+    #[derive(serde::Serialize)]
     struct Test {
         a: i32,
-        b: String,
+        b: &'static str,
     }
 
     let mut i = 0;
@@ -119,7 +117,7 @@ async fn test() -> impl IntoResponse {
                 i += 1;
                 i
             },
-            b: "test".to_string(),
+            b: if i % 2 == 0 { "even" } else { "odd" },
         })
         .take(100),
     )

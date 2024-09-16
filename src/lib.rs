@@ -31,10 +31,10 @@ pub type Request = http::Request<body::Body>;
 pub type Response = http::Response<body::Body>;
 
 pub use crate::extract::FromRequest;
+pub use crate::layers::Layer;
 pub use crate::response::IntoResponse;
 pub use crate::router::Router;
 pub use crate::service::Service;
-pub use tower_layer::Layer;
 
 #[cfg(feature = "tower-service")]
 pub mod tower;
@@ -46,3 +46,4 @@ extern crate sonic_rs as json_impl;
 
 #[cfg(not(all(feature = "json-simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
 extern crate serde_json as json_impl;
+

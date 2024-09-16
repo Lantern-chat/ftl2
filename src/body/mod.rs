@@ -132,6 +132,13 @@ impl From<Bytes> for Body {
     }
 }
 
+impl From<Full<Bytes>> for Body {
+    #[inline]
+    fn from(value: Full<Bytes>) -> Self {
+        Body(BodyInner::Full(value))
+    }
+}
+
 impl From<Vec<u8>> for Body {
     #[inline]
     fn from(value: Vec<u8>) -> Self {

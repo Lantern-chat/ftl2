@@ -1,4 +1,4 @@
-use core::future::Future;
+use core::future::{Future, IntoFuture};
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
@@ -12,9 +12,10 @@ pub trait Handler<T, S>: Clone + Send + Sync + 'static {
     fn call(self, req: Request, state: S) -> impl Future<Output = Response> + Send + 'static;
 }
 
-impl<Func, Fut, Res, S> Handler<((),), S> for Func
+impl<Func, R, Fut, Res, S> Handler<((),), S> for Func
 where
-    Func: FnOnce() -> Fut + Clone + Send + Sync + 'static,
+    Func: FnOnce() -> R + Clone + Send + Sync + 'static,
+    R: IntoFuture<IntoFuture = Fut> + Send,
     Fut: Future<Output = Res> + Send,
     Res: IntoResponse,
     S: Send + Sync + 'static,
@@ -27,9 +28,10 @@ where
 macro_rules! impl_handler {
     ([$($t:ident),*], $last:ident) => {
         // NOTE: The `Z` parameter avoid conflicts, and is not used.
-        impl<Func, Fut, S, Res, Z, $($t,)* $last> Handler<(Z, $($t,)* $last,), S> for Func
+        impl<Func, R, Fut, S, Res, Z, $($t,)* $last> Handler<(Z, $($t,)* $last,), S> for Func
         where
-            Func: FnOnce($($t,)* $last) -> Fut + Clone + Send + Sync + 'static,
+            Func: FnOnce($($t,)* $last) -> R + Clone + Send + Sync + 'static,
+            R: IntoFuture<IntoFuture = Fut> + Send,
             Fut: Future<Output = Res> + Send,
             Res: IntoResponse,
             S: Send + Sync + 'static,

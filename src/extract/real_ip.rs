@@ -33,9 +33,7 @@ use http::{header::HeaderName, HeaderValue, Request, StatusCode};
 /// - `true-client-ip` (used by some load balancers)
 /// - `client-ip` (used by some load balancers)
 ///
-/// If none of these headers are found, it will return a 400 Bad Request via [`IpAddrRejection`],
-/// or the error can be handled with a custom rejection handler with
-/// [`RateLimitLayerBuilder::handle_error`](crate::RateLimitLayerBuilder::handle_error).
+/// If none of these headers are found, it will return a 400 Bad Request via [`IpAddrRejection`].
 ///
 /// The [`RealIpLayer`] can be also used to add the [`RealIp`] extension to the request if available, allowing
 /// other services or extractors to reuse it without rescanning the headers every time.

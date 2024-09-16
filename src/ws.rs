@@ -112,14 +112,14 @@ impl<S> FromRequest<S> for Ws {
 }
 
 impl Ws {
-    /// See [WebSocketConfig]
+    /// See [WebSocketConfig](protocol::WebSocketConfig)
     #[must_use]
     pub fn write_buffer_size(mut self, size: usize) -> Self {
         self.config.write_buffer_size = size;
         self
     }
 
-    /// See [WebSocketConfig]
+    /// See [WebSocketConfig](protocol::WebSocketConfig)
     #[must_use]
     pub fn max_write_buffer_size(mut self, max: usize) -> Self {
         self.config.max_write_buffer_size = max;
