@@ -25,6 +25,8 @@ pub mod serve;
 pub mod service;
 pub mod ws;
 
+pub use http::request::Parts as RequestParts;
+pub use http::response::Parts as ResponseParts;
 pub type Request = http::Request<body::Body>;
 pub type Response = http::Response<body::Body>;
 

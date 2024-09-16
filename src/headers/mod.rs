@@ -1,9 +1,11 @@
 use std::future::Future;
 
-use crate::{extract::FromRequestParts, response::IntoResponseParts, IntoResponse, Response};
-
 use headers::{Header as HeaderType, HeaderMapExt};
-use http::{request::Parts, StatusCode};
+use http::StatusCode;
+
+use crate::{
+    extract::FromRequestParts, response::IntoResponseParts, IntoResponse, RequestParts, Response, ResponseParts,
+};
 
 pub mod accept_encoding;
 
@@ -34,7 +36,7 @@ where
     type Rejection = HeaderError;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
@@ -51,7 +53,7 @@ impl<H> IntoResponseParts for Header<H>
 where
     H: HeaderType,
 {
-    fn into_response_parts(self, parts: &mut http::response::Parts) {
+    fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.headers.typed_insert(self.0);
     }
 }

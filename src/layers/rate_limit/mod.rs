@@ -10,13 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::response::{IntoResponse, Response};
+use http::{Extensions, Method, Request};
+
 use crate::{
     extract::{FromRequestParts, MatchedPath as FtlMatchedPath},
     service::ServiceFuture,
+    IntoResponse, Layer, RequestParts, Response, Service,
 };
-use crate::{Layer, Service};
-use http::{request::Parts, Extensions, Method, Request};
 
 /// Trait for user-provided keys used to identify rate limiter entries.
 ///
@@ -443,7 +443,7 @@ impl<K: Key> RateLimitLayer<K> {
     }
 }
 
-async fn get_user_key<K>(parts: &mut Parts) -> Result<K, K::Rejection>
+async fn get_user_key<K>(parts: &mut RequestParts) -> Result<K, K::Rejection>
 where
     K: Key + FromRequestParts<()>,
 {

@@ -1,8 +1,6 @@
 use std::convert::Infallible;
 
-use http::request::Parts;
-
-use crate::Service;
+use crate::{RequestParts, Service};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RedirectKind {
@@ -21,7 +19,7 @@ pub struct RewriteService<F>(RedirectKind, F);
 
 impl<F> RewriteService<F>
 where
-    F: Fn(&Parts) -> String + Clone + Send + Sync + 'static,
+    F: Fn(&RequestParts) -> String + Clone + Send + Sync + 'static,
 {
     pub fn new(kind: RedirectKind, f: F) -> Self {
         Self(kind, f)
@@ -38,7 +36,7 @@ where
 
 impl<F, B> Service<http::Request<B>> for RewriteService<F>
 where
-    F: Fn(&Parts) -> String + Clone + Send + Sync + 'static,
+    F: Fn(&RequestParts) -> String + Clone + Send + Sync + 'static,
 {
     type Response = http::Response<http_body_util::Empty<bytes::Bytes>>;
     type Error = Infallible;

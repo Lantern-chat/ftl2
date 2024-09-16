@@ -1,4 +1,4 @@
-use http::response::Parts;
+use crate::ResponseParts;
 
 // pub fn should_compress<P: Predicate>(parts: &Parts, predicate: P) -> bool {
 //     // Never compress ranges?
@@ -11,7 +11,7 @@ use http::response::Parts;
 // }
 
 pub trait Predicate: Clone + Send + Sync + 'static {
-    fn should_compress(&self, parts: &Parts) -> bool;
+    fn should_compress(&self, parts: &ResponseParts) -> bool;
 
     #[inline(always)]
     fn and<P>(self, other: P) -> And<Self, P>
@@ -32,24 +32,24 @@ where
     Rhs: Predicate,
 {
     #[inline]
-    fn should_compress(&self, parts: &Parts) -> bool {
+    fn should_compress(&self, parts: &ResponseParts) -> bool {
         self.0.should_compress(parts) && self.1.should_compress(parts)
     }
 }
 
 impl<F> Predicate for F
 where
-    F: Fn(&Parts) -> bool + Clone + Send + Sync + 'static,
+    F: Fn(&ResponseParts) -> bool + Clone + Send + Sync + 'static,
 {
     #[inline]
-    fn should_compress(&self, parts: &Parts) -> bool {
+    fn should_compress(&self, parts: &ResponseParts) -> bool {
         self(parts)
     }
 }
 
 impl Predicate for bool {
     #[inline]
-    fn should_compress(&self, _: &Parts) -> bool {
+    fn should_compress(&self, _: &ResponseParts) -> bool {
         *self
     }
 }
@@ -67,7 +67,7 @@ pub struct DefaultPredicate;
 const MIN_CONTENT_SIZE: usize = 1024;
 
 impl Predicate for DefaultPredicate {
-    fn should_compress(&self, parts: &Parts) -> bool {
+    fn should_compress(&self, parts: &ResponseParts) -> bool {
         let mut should_compress = match content_size(parts) {
             Some(content_size) => content_size >= MIN_CONTENT_SIZE,
             None => true, // assume dynamic stream size is compressible
@@ -86,7 +86,7 @@ impl Predicate for DefaultPredicate {
                     .match_kind(MatchKind::LeftmostFirst)
                     .start_kind(StartKind::Anchored)
                     .build([
-                        "image/", "video/", "audio/",
+                        "image/", "video/", "audio/", // media types
                         "application/ogg",   // OGG/OGX media format
                         "application/grpc",  // gRPC
                         "text/event-stream", // Server-Sent Events
@@ -108,11 +108,11 @@ impl Predicate for DefaultPredicate {
     }
 }
 
-fn content_type(response: &Parts) -> &str {
+fn content_type(response: &ResponseParts) -> &str {
     response.headers.get(http::header::CONTENT_TYPE).and_then(|h| h.to_str().ok()).unwrap_or_default()
 }
 
-fn content_size(response: &Parts) -> Option<usize> {
+fn content_size(response: &ResponseParts) -> Option<usize> {
     response
         .headers
         .get(http::header::CONTENT_LENGTH)

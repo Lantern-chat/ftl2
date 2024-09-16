@@ -13,8 +13,11 @@ use std::{
     str::FromStr,
 };
 
-use crate::{extract::FromRequestParts, response::IntoResponse, service::ServiceFuture, Layer, Response, Service};
-use http::{header::HeaderName, request::Parts, HeaderValue, Request, StatusCode};
+use crate::{
+    extract::FromRequestParts, response::IntoResponse, service::ServiceFuture, Layer, RequestParts, Response,
+    Service,
+};
+use http::{header::HeaderName, HeaderValue, Request, StatusCode};
 
 /// Wrapper around [`std::net::IpAddr`] that can be extracted from the request parts.
 ///
@@ -120,7 +123,10 @@ impl IntoResponse for IpAddrRejection {
 impl<S> FromRequestParts<S> for RealIp {
     type Rejection = IpAddrRejection;
 
-    fn from_request_parts(parts: &mut Parts, _: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request_parts(
+        parts: &mut RequestParts,
+        _: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         future::ready(
             parts
                 .extensions
@@ -135,7 +141,10 @@ impl<S> FromRequestParts<S> for RealIp {
 impl<S> FromRequestParts<S> for RealIpPrivacyMask {
     type Rejection = IpAddrRejection;
 
-    fn from_request_parts(parts: &mut Parts, _: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+    fn from_request_parts(
+        parts: &mut RequestParts,
+        _: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         future::ready(
             match parts.extensions.get::<RealIp>().cloned().or_else(|| get_ip_from_parts(parts)) {
                 Some(ip) => Ok(ip.into()),
@@ -184,7 +193,7 @@ impl<I> Layer<I> for RealIpLayer {
     }
 }
 
-pub(crate) fn get_ip_from_parts(parts: &Parts) -> Option<RealIp> {
+pub(crate) fn get_ip_from_parts(parts: &RequestParts) -> Option<RealIp> {
     fn parse_ip(s: &HeaderValue) -> Option<IpAddr> {
         s.to_str()
             .ok()

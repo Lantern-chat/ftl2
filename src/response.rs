@@ -1,15 +1,14 @@
 use bytes::{Bytes, BytesMut};
 use http::{
     header::{HeaderMap, HeaderName, HeaderValue},
-    response::Parts,
     Extensions, StatusCode,
 };
 use std::{borrow::Cow, convert::Infallible};
 
-pub use crate::{body::Body, Response};
+pub use crate::{body::Body, Response, ResponseParts};
 
 pub trait IntoResponseParts {
-    fn into_response_parts(self, parts: &mut Parts);
+    fn into_response_parts(self, parts: &mut ResponseParts);
 }
 
 pub trait IntoResponse {
@@ -25,19 +24,19 @@ impl IntoResponse for std::io::Error {
 
 impl IntoResponseParts for () {
     #[inline]
-    fn into_response_parts(self, _parts: &mut Parts) {}
+    fn into_response_parts(self, _parts: &mut ResponseParts) {}
 }
 
 impl IntoResponseParts for StatusCode {
     #[inline]
-    fn into_response_parts(self, parts: &mut Parts) {
+    fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.status = self;
     }
 }
 
 impl IntoResponseParts for Extensions {
     #[inline]
-    fn into_response_parts(self, parts: &mut Parts) {
+    fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.extensions.extend(self);
     }
 }
@@ -47,7 +46,7 @@ where
     T: IntoResponseParts,
 {
     #[inline]
-    fn into_response_parts(self, parts: &mut Parts) {
+    fn into_response_parts(self, parts: &mut ResponseParts) {
         if let Some(inner) = self {
             inner.into_response_parts(parts);
         }
@@ -56,14 +55,14 @@ where
 
 impl IntoResponseParts for HeaderMap {
     #[inline]
-    fn into_response_parts(self, parts: &mut Parts) {
+    fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.headers.extend(self);
     }
 }
 
 impl<const N: usize> IntoResponseParts for [(HeaderName, HeaderValue); N] {
     #[inline]
-    fn into_response_parts(self, parts: &mut Parts) {
+    fn into_response_parts(self, parts: &mut ResponseParts) {
         parts.headers.reserve(N);
         for (name, value) in self {
             parts.headers.append(name, value);
@@ -122,7 +121,7 @@ macro_rules! impl_into_response_parts {
             $($t: IntoResponseParts,)*
         {
             #[allow(non_snake_case)]
-            fn into_response_parts(self, parts: &mut Parts) {
+            fn into_response_parts(self, parts: &mut ResponseParts) {
                 let ($($t,)*) = self;
                 $($t.into_response_parts(parts);)*
             }
@@ -257,7 +256,7 @@ impl IntoResponse for HeaderMap {
     }
 }
 
-impl IntoResponse for Parts {
+impl IntoResponse for ResponseParts {
     #[inline]
     fn into_response(self) -> Response {
         Response::from_parts(self, Body::empty())

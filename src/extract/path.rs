@@ -3,9 +3,9 @@
 use core::str::FromStr;
 use std::{error::Error, future::Future, sync::Arc};
 
-use http::{request::Parts, StatusCode};
+use http::StatusCode;
 
-use crate::{params::UrlParams, response::IntoResponse, Response};
+use crate::{params::UrlParams, response::IntoResponse, RequestParts, Response};
 
 use super::FromRequestParts;
 
@@ -106,7 +106,7 @@ where
     type Rejection = PathRejection;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         let params = parts.extensions.get::<UrlParams>().ok_or(PathRejection::MissingParameters);

@@ -1,15 +1,15 @@
 use core::future::Future;
 use std::{convert::Infallible, ops::Deref, str::FromStr as _, sync::Arc};
 
-use http::{request::Parts, uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri, Version};
+use http::{uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri, Version};
 
-use crate::{body::Body, IntoResponse, Request, Response};
+use crate::{body::Body, IntoResponse, Request, RequestParts, Response};
 
 pub trait FromRequestParts<S>: Sized + Send + 'static {
     type Rejection: IntoResponse + Send + 'static;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
 }
@@ -77,7 +77,7 @@ macro_rules! impl_from_request {
             type Rejection = Response;
 
             fn from_request_parts(
-                parts: &mut Parts,
+                parts: &mut RequestParts,
                 state: &S,
             ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
                 async move {
@@ -127,7 +127,7 @@ where
     type Rejection = Infallible;
 
     fn from_request_parts(
-        _parts: &mut Parts,
+        _parts: &mut RequestParts,
         state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         core::future::ready(Ok(State(state.clone())))
@@ -150,7 +150,7 @@ where
     type Rejection = MissingExtension;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         core::future::ready(match parts.extensions.get::<E>() {
@@ -164,7 +164,7 @@ impl<S> FromRequestParts<S> for () {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        _parts: &mut Parts,
+        _parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(())
@@ -191,7 +191,7 @@ where
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(T::from_request_parts(parts, state).await.ok()) }
@@ -218,7 +218,7 @@ where
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(T::from_request_parts(parts, state).await) }
@@ -229,18 +229,18 @@ impl<S> FromRequestParts<S> for Method {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.method.clone())
     }
 }
 
-impl<S> FromRequestParts<S> for Parts {
+impl<S> FromRequestParts<S> for RequestParts {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.clone())
@@ -251,7 +251,7 @@ impl<S> FromRequestParts<S> for Uri {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.uri.clone())
@@ -275,7 +275,7 @@ impl IntoResponse for AuthorityRejection {
     }
 }
 
-pub(crate) fn extract_authority(parts: &Parts) -> Result<Authority, AuthorityRejection> {
+pub(crate) fn extract_authority(parts: &RequestParts) -> Result<Authority, AuthorityRejection> {
     let from_uri = parts.uri.authority();
 
     let from_header = parts
@@ -299,7 +299,7 @@ impl<S> FromRequestParts<S> for Authority {
     type Rejection = AuthorityRejection;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ready(extract_authority(parts))
@@ -310,7 +310,7 @@ impl<S> FromRequestParts<S> for Version {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.version)
@@ -321,7 +321,7 @@ impl<S> FromRequestParts<S> for HeaderMap {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.headers.clone())
@@ -332,7 +332,7 @@ impl<S> FromRequestParts<S> for Extensions {
     type Rejection = Infallible;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(parts.extensions.clone())
@@ -371,7 +371,7 @@ impl<S> FromRequestParts<S> for MatchedPath {
     type Rejection = MatchedPathRejection;
 
     fn from_request_parts(
-        parts: &mut Parts,
+        parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ready(
