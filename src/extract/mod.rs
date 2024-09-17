@@ -69,6 +69,7 @@ where
 
 pub mod body;
 pub mod path;
+pub mod query;
 pub mod real_ip;
 
 #[cfg(feature = "json")]
