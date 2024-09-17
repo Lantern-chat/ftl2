@@ -97,7 +97,10 @@ impl IntoResponse for OneOfRejectionError {
 }
 
 #[cfg(feature = "json")]
-impl<T> Extractable<T> for super::Json
+use super::Json;
+
+#[cfg(feature = "json")]
+impl<T> Extractable<T> for Json
 where
     T: serde::de::DeserializeOwned + Send + 'static,
 {
@@ -106,7 +109,7 @@ where
     }
 
     fn extract(req: Request) -> impl Future<Output = Result<T, Response>> + Send {
-        super::Json::<T>::from_request(req, &()).map(|res| match res {
+        Json::<T>::from_request(req, &()).map(|res| match res {
             Ok(json) => Ok(json.0),
             Err(err) => Err(err.into_response()),
         })
@@ -114,7 +117,10 @@ where
 }
 
 #[cfg(feature = "cbor")]
-impl<T> Extractable<T> for super::Cbor
+use super::Cbor;
+
+#[cfg(feature = "cbor")]
+impl<T> Extractable<T> for Cbor
 where
     T: serde::de::DeserializeOwned + Send + 'static,
 {
@@ -123,9 +129,29 @@ where
     }
 
     fn extract(req: Request) -> impl Future<Output = Result<T, Response>> + Send {
-        super::Cbor::<T>::from_request(req, &()).map(|res| match res {
+        Cbor::<T>::from_request(req, &()).map(|res| match res {
             Ok(cbor) => Ok(cbor.0),
             Err(err) => Err(err.into_response()),
         })
     }
 }
+
+impl<T> Extractable<T> for () {
+    fn matches_content_type(_: &HeaderValue) -> bool {
+        false
+    }
+
+    fn extract(_: Request) -> impl Future<Output = Result<T, Response>> + Send {
+        async move { unreachable!() }
+    }
+}
+
+#[cfg(not(feature = "cbor"))]
+type Cbor = ();
+#[cfg(not(feature = "json"))]
+type Json = ();
+
+/// A type that can be extracted from a request body using any format supported,
+/// currently JSON and CBOR. If JSON or CBOR support is disabled, this type will
+/// reject requests made with those content types.
+pub type OneOfAny<T> = OneOf<T, (Json, Cbor)>;

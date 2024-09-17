@@ -66,10 +66,10 @@ macro_rules! path_segment {
 
 macro_rules! decl_segments {
     ($($t:ident),*) => {
-        impl<$($t: $crate::extract::path::PathSegment,)*> $crate::extract::path::PathSegments for ($($t,)*) {
+        impl<$($t: PathSegment,)*> PathSegments for ($($t,)*) {
             type Output = ($($t::Type,)*);
 
-            fn parse_segments(segments: &$crate::params::UrlParams) -> Result<Self::Output, $crate::extract::path::PathRejection> {
+            fn parse_segments(segments: &$crate::params::UrlParams) -> Result<Self::Output, PathRejection> {
                 Ok(($($t::parse_segments(segments)?,)*))
             }
         }
@@ -77,6 +77,14 @@ macro_rules! decl_segments {
 }
 
 all_the_tuples_no_last_special_case!(decl_segments);
+
+impl PathSegments for () {
+    type Output = ();
+
+    fn parse_segments(_segments: &UrlParams) -> Result<Self::Output, PathRejection> {
+        Ok(())
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum PathRejection {

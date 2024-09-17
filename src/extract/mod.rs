@@ -44,6 +44,14 @@ impl<S> FromRequest<S> for Body {
     }
 }
 
+impl<S> FromRequest<S> for () {
+    type Rejection = Infallible;
+
+    fn from_request(_req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(())
+    }
+}
+
 impl<S, T> FromRequest<S, private::ViaParts> for T
 where
     S: Send + Sync,
