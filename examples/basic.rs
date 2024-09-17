@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use ftl::{
-    body::Json,
-    extract::{real_ip::RealIpPrivacyMask, Extension, MatchedPath},
+    body::{Cbor, Json},
+    extract::{one_of::OneOf, real_ip::RealIpPrivacyMask, Extension, MatchedPath},
     layers::{
         compression::CompressionLayer,
         rate_limit::{gcra::Quota, RateLimitLayerBuilder},
@@ -50,7 +50,8 @@ async fn main() {
         .get("/{*path}", placeholder)
         .get("/", placeholder)
         .get("/hello", placeholder)
-        .get("/test", test);
+        .get("/test", test)
+        .post("/body", with_body);
 
     // create server to bind at localhost:8083, under https
     let mut server = Server::bind(["0.0.0.0:8083".parse().unwrap()]);
@@ -102,13 +103,13 @@ async fn placeholder(
     format!("Matched: {}: {} from {}\n\n{long}", p.0, uri.path(), real_ip)
 }
 
-async fn test() -> impl IntoResponse {
-    #[derive(serde::Serialize)]
-    struct Test {
-        a: i32,
-        b: &'static str,
-    }
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Test {
+    a: i32,
+    b: String,
+}
 
+async fn test() -> impl IntoResponse {
     let mut i = 0;
 
     Json::stream_simple_array(
@@ -117,8 +118,12 @@ async fn test() -> impl IntoResponse {
                 i += 1;
                 i
             },
-            b: if i % 2 == 0 { "even" } else { "odd" },
+            b: if i % 2 == 0 { "even" } else { "odd" }.into(),
         })
         .take(100),
     )
+}
+
+async fn with_body(OneOf(value): OneOf<Test, (Json, Cbor)>) {
+    println!("{}, {}", value.a, value.b);
 }

@@ -68,6 +68,13 @@ mod json;
 #[cfg(feature = "json")]
 pub use json::Json;
 
+#[cfg(feature = "cbor")]
+mod cbor;
+#[cfg(feature = "cbor")]
+pub use cbor::Cbor;
+
+pub mod one_of;
+
 pub use body::{CollectedBytes, Limited};
 pub use path::Path;
 

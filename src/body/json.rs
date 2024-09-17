@@ -1,13 +1,13 @@
-use crate::{body::BodyError, IntoResponse, Response};
+use crate::{
+    body::{Body, BodyError},
+    IntoResponse, Response,
+};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use headers::ContentType;
 use http::StatusCode;
-use http_body_util::Full;
 use hyper::body::Frame;
-
-use super::Body;
 
 /// A wrapper around a value that can be (de)serialized to JSON.
 ///
@@ -24,12 +24,12 @@ use super::Body;
 #[must_use]
 #[derive(Clone, Debug)]
 #[repr(transparent)]
-pub struct Json<T>(pub T);
+pub struct Json<T = ()>(pub T);
 
-impl Json<()> {
-    pub fn try_new<T: serde::Serialize>(value: T) -> Result<Full<Bytes>, json_impl::Error> {
+impl Json {
+    pub fn try_new<T: serde::Serialize>(value: T) -> Result<Response, json_impl::Error> {
         match json_impl::to_vec(&value) {
-            Ok(v) => Ok(Full::new(Bytes::from(v))),
+            Ok(v) => Ok(Body::from(v).with_header(ContentType::json()).into_response()),
             Err(e) => Err(e),
         }
     }
@@ -49,7 +49,7 @@ impl Json<()> {
         stream_array(stream)
     }
 
-    /// Like `stream_array`, but for streams that yield `T` instead of results.
+    /// Like [`stream_array`](Self::stream_array), but for streams that yield `T` instead of results.
     pub fn stream_simple_array<S, T>(stream: S) -> impl IntoResponse
     where
         S: Stream<Item = T> + Send + 'static,
@@ -74,7 +74,7 @@ impl Json<()> {
         stream_map(stream)
     }
 
-    /// Like `stream_map`, but for streams that yield `(String, T)` pairs
+    /// Like [`stream_map`](Self::stream_map), but for streams that yield `(String, T)` pairs
     /// instead of results.
     pub fn stream_simple_map<S, K, T>(stream: S) -> impl IntoResponse
     where
@@ -92,8 +92,7 @@ where
 {
     fn into_response(self) -> Response {
         match Json::try_new(self.0) {
-            Ok(body) => Body::from(body).with_header(ContentType::json()).into_response(),
-
+            Ok(resp) => resp,
             Err(e) => {
                 log::error!("JSON Response error: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()

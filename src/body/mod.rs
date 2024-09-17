@@ -14,9 +14,13 @@ use tokio_stream::wrappers::ReceiverStream;
 
 #[cfg(feature = "json")]
 mod json;
-
 #[cfg(feature = "json")]
 pub use json::Json;
+
+#[cfg(feature = "cbor")]
+mod cbor;
+#[cfg(feature = "cbor")]
+pub use cbor::Cbor;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
@@ -122,6 +126,13 @@ impl HttpBody for BodyInner {
             Self::Stream(inner) => inner.size_hint(),
             Self::Dyn(inner) => inner.size_hint(),
         }
+    }
+}
+
+impl From<()> for Body {
+    #[inline]
+    fn from(_: ()) -> Self {
+        Body::empty()
     }
 }
 

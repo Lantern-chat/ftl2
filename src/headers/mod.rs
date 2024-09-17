@@ -1,6 +1,6 @@
-use std::future::Future;
+use std::{future::Future, sync::LazyLock};
 
-use headers::{Header as HeaderType, HeaderMapExt};
+use headers::{ContentType, Header as HeaderType, HeaderMapExt};
 use http::StatusCode;
 
 use crate::{
@@ -8,6 +8,9 @@ use crate::{
 };
 
 pub mod accept_encoding;
+
+pub static APPLICATION_CBOR: LazyLock<ContentType> =
+    LazyLock::new(|| ContentType::from("application/cbor".parse::<mime::Mime>().unwrap()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
