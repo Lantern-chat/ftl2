@@ -50,6 +50,8 @@ impl Json {
     }
 
     /// Like [`stream_array`](Self::stream_array), but for streams that yield `T` instead of results.
+    #[inline]
+    #[must_use]
     pub fn stream_simple_array<S, T>(stream: S) -> impl IntoResponse
     where
         S: Stream<Item = T> + Send + 'static,
@@ -76,6 +78,8 @@ impl Json {
 
     /// Like [`stream_map`](Self::stream_map), but for streams that yield `(String, T)` pairs
     /// instead of results.
+    #[inline]
+    #[must_use]
     pub fn stream_simple_map<S, K, T>(stream: S) -> impl IntoResponse
     where
         S: Stream<Item = (K, T)> + Send + 'static,

@@ -43,6 +43,8 @@ impl Cbor {
     }
 
     /// Like [`stream_array`](Self::stream_array), but for streams that yield `T` instead of results.
+    #[inline]
+    #[must_use]
     pub fn stream_simple_array<S, T>(stream: S) -> impl IntoResponse
     where
         S: Stream<Item = T> + Send + 'static,

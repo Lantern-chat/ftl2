@@ -24,6 +24,15 @@ pub enum FromQueryError {
     MissingQuery,
 }
 
+impl IntoResponse for FromQueryError {
+    fn into_response(self) -> Response {
+        match self {
+            FromQueryError::De(e) => (e.to_string(), http::StatusCode::BAD_REQUEST).into_response(),
+            FromQueryError::MissingQuery => http::StatusCode::BAD_REQUEST.into_response(),
+        }
+    }
+}
+
 impl<S, T> FromRequestParts<S> for Query<T>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
@@ -39,14 +48,5 @@ where
             Some(Err(e)) => Err(e.into()),
             None => Err(FromQueryError::MissingQuery),
         })
-    }
-}
-
-impl IntoResponse for FromQueryError {
-    fn into_response(self) -> Response {
-        match self {
-            FromQueryError::De(e) => (e.to_string(), http::StatusCode::BAD_REQUEST).into_response(),
-            FromQueryError::MissingQuery => http::StatusCode::BAD_REQUEST.into_response(),
-        }
     }
 }

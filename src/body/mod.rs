@@ -22,6 +22,9 @@ mod cbor;
 #[cfg(feature = "cbor")]
 pub use cbor::Cbor;
 
+mod form;
+pub use form::Form;
+
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
     #[error("Hyper error: {0}")]

@@ -18,6 +18,16 @@ pub enum JsonRejectionError {
     BodyError(#[from] BodyError),
 }
 
+impl IntoResponse for JsonRejectionError {
+    fn into_response(self) -> Response {
+        match self {
+            // assume badly formatted JSON is a bad request
+            JsonRejectionError::Json(_) => StatusCode::BAD_REQUEST.into_response(),
+            JsonRejectionError::BodyError(err) => body_error_to_response(err),
+        }
+    }
+}
+
 impl<S, T> FromRequest<S> for Json<T>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
@@ -43,16 +53,6 @@ where
             };
 
             Ok(Json(value))
-        }
-    }
-}
-
-impl IntoResponse for JsonRejectionError {
-    fn into_response(self) -> Response {
-        match self {
-            // assume badly formatted JSON is a bad request
-            JsonRejectionError::Json(_) => StatusCode::BAD_REQUEST.into_response(),
-            JsonRejectionError::BodyError(err) => body_error_to_response(err),
         }
     }
 }

@@ -68,14 +68,18 @@ sonic-rs = { version = "0.3", optional = true }
 # CBOR
 ciborium = { version = "0.2", optional = true }
 
+# application/x-www-form-urlencoded opt-in
+serde_html_form = { version = "0.2", optional = true }
+
 [features]
-default = ["tls-rustls", "gcra", "compression-br", "compression-deflate", "compression-gzip", "compression-zstd", "json", "cbor", "json-simd"]
+default = ["tls-rustls", "gcra", "json", "cbor", "json-simd", "serde_html_form", "compression-all"]
 tls-rustls = ["tls-rustls-no-provider", "rustls/aws-lc-rs"]
 tls-rustls-no-provider = ["arc-swap", "rustls", "rustls-pemfile", "tokio/fs", "tokio/time", "tokio-rustls", "rustls-pki-types"]
 tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
 tower-service = ["dep:tower-service"]
 gcra = ["dep:scc", "dep:ahash"]
 
+compression-all = ["compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]
 compression-br = ["_meta_compression", "async-compression/brotli"]
 compression-deflate = ["_meta_compression", "async-compression/deflate"]
 compression-gzip = ["_meta_compression", "async-compression/gzip"]

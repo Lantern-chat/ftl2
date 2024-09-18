@@ -68,9 +68,13 @@ where
 }
 
 pub mod body;
+pub mod form;
 pub mod path;
 pub mod query;
 pub mod real_ip;
+pub mod scheme;
+
+pub use crate::body::Form;
 
 #[cfg(feature = "json")]
 mod json;

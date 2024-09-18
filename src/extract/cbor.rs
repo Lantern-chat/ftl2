@@ -18,6 +18,16 @@ pub enum CborRejectionError {
     BodyError(#[from] BodyError),
 }
 
+impl IntoResponse for CborRejectionError {
+    fn into_response(self) -> Response {
+        match self {
+            // assume badly formatted JSON is a bad request
+            CborRejectionError::Cbor(_) => StatusCode::BAD_REQUEST.into_response(),
+            CborRejectionError::BodyError(err) => body_error_to_response(err),
+        }
+    }
+}
+
 impl<S, T> FromRequest<S> for Cbor<T>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
@@ -37,16 +47,6 @@ where
             };
 
             Ok(Cbor(value))
-        }
-    }
-}
-
-impl IntoResponse for CborRejectionError {
-    fn into_response(self) -> Response {
-        match self {
-            // assume badly formatted JSON is a bad request
-            CborRejectionError::Cbor(_) => StatusCode::BAD_REQUEST.into_response(),
-            CborRejectionError::BodyError(err) => body_error_to_response(err),
         }
     }
 }
