@@ -1,5 +1,5 @@
 #![warn(clippy::perf, clippy::style, clippy::must_use_candidate)]
-#![allow(clippy::manual_async_fn)]
+#![allow(clippy::manual_async_fn)] // most of this lints are just wrong
 
 extern crate tracing as log;
 

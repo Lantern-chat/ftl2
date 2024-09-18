@@ -1,4 +1,4 @@
-use crate::{IntoResponse, RequestParts, Response};
+use crate::{form_impl, IntoResponse, RequestParts, Response};
 
 use super::FromRequestParts;
 
@@ -18,7 +18,7 @@ impl<T> core::ops::Deref for Query<T> {
 #[derive(Debug, thiserror::Error)]
 pub enum FromQueryError {
     #[error(transparent)]
-    De(#[from] serde_urlencoded::de::Error),
+    De(#[from] form_impl::de::Error),
 
     #[error("The query is missing")]
     MissingQuery,
@@ -43,7 +43,7 @@ where
         parts: &mut RequestParts,
         _state: &S,
     ) -> impl core::future::Future<Output = Result<Self, Self::Rejection>> + Send {
-        core::future::ready(match parts.uri.query().map(serde_urlencoded::from_str) {
+        core::future::ready(match parts.uri.query().map(form_impl::from_str) {
             Some(Ok(value)) => Ok(Query(value)),
             Some(Err(e)) => Err(e.into()),
             None => Err(FromQueryError::MissingQuery),
