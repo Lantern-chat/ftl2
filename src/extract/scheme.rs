@@ -56,7 +56,7 @@ impl<S> FromRequestParts<S> for Scheme {
             // X-Forwarded-Proto
             if let Some(scheme) = parts
                 .headers
-                .get(HeaderName::from_static("x-forwarded-proto"))
+                .get(const { HeaderName::from_static("x-forwarded-proto") })
                 .map(|scheme| Scheme::try_from(scheme.as_bytes()))
                 .transpose()?
             {

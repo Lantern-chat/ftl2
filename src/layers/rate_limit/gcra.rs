@@ -253,9 +253,9 @@ impl IntoResponse for RateLimitError {
 
         // optimize for common values
         let value = match reset {
-            1 => HeaderValue::from_static("1"),
-            2 => HeaderValue::from_static("2"),
-            3 => HeaderValue::from_static("3"),
+            1 => const { HeaderValue::from_static("1") },
+            2 => const { HeaderValue::from_static("2") },
+            3 => const { HeaderValue::from_static("3") },
             _ => {
                 let mut buffer = itoa::Buffer::new();
                 HeaderValue::from_str(buffer.format(reset)).unwrap()
@@ -264,12 +264,12 @@ impl IntoResponse for RateLimitError {
 
         let headers = res.headers_mut();
 
-        headers.insert(HeaderName::from_static("ratelimit-reset"), value.clone());
-        headers.insert(HeaderName::from_static("x-ratelimit-reset"), value.clone());
-        headers.insert(HeaderName::from_static("retry-after"), value.clone());
+        headers.insert(const { HeaderName::from_static("ratelimit-reset") }, value.clone());
+        headers.insert(const { HeaderName::from_static("x-ratelimit-reset") }, value.clone());
+        headers.insert(const { HeaderName::from_static("retry-after") }, value.clone());
         headers.insert(
-            HeaderName::from_static("ratelimit-remaining"),
-            HeaderValue::from_static("0"),
+            const { HeaderName::from_static("ratelimit-remaining") },
+            const { HeaderValue::from_static("0") },
         );
 
         res

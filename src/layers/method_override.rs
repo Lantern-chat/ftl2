@@ -25,7 +25,7 @@ where
     type Error = S::Error;
 
     fn call(&self, mut req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        if let Some(method) = req.headers().get(HeaderName::from_static("x-http-method-override")) {
+        if let Some(method) = req.headers().get(const { HeaderName::from_static("x-http-method-override") }) {
             if let Ok(method) = http::Method::from_bytes(method.as_bytes()) {
                 *req.method_mut() = method;
             }

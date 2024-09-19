@@ -351,10 +351,7 @@ fn set_content_length(size_hint: http_body::SizeHint, headers: &mut HeaderMap) {
 
     if let Some(size) = size_hint.exact() {
         let header_value = if size == 0 {
-            #[allow(clippy::declare_interior_mutable_const)]
-            const ZERO: HeaderValue = HeaderValue::from_static("0");
-
-            ZERO
+            const { HeaderValue::from_static("0") }
         } else {
             let mut buffer = itoa::Buffer::new();
             HeaderValue::from_str(buffer.format(size)).unwrap()
