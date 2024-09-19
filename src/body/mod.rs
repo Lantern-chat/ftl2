@@ -25,6 +25,9 @@ pub use cbor::Cbor;
 mod form;
 pub use form::Form;
 
+pub mod disposition;
+pub use disposition::Disposition;
+
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
     #[error("Hyper error: {0}")]
