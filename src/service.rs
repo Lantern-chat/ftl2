@@ -40,7 +40,7 @@ where
 }
 
 pub trait MakeService<Target, Request> {
-    type Service: Service<Request, Error: Into<crate::error::BoxError>> + Send;
+    type Service: Service<Request, Error: Error + Send + Sync + 'static> + Send;
 
     fn make_service(&self, target: Target) -> Self::Service;
 }
@@ -50,7 +50,7 @@ pub struct MakeServiceFn<F>(pub F);
 impl<F, S, Target, Request> MakeService<Target, Request> for MakeServiceFn<F>
 where
     F: Fn(Target) -> S,
-    S: Service<Request, Error: Into<crate::error::BoxError>> + Send,
+    S: Service<Request, Error: Error + Send + Sync + 'static> + Send,
 {
     type Service = S;
 

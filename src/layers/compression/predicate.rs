@@ -66,6 +66,45 @@ pub struct DefaultPredicate;
 
 const MIN_CONTENT_SIZE: usize = 1024;
 
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
+use std::sync::LazyLock;
+
+static INCOMPRESSIBLE_MIMES: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    #[rustfmt::skip]
+    let built_in_patterns = [
+        "image/", "video/", "audio/", // media types
+        "application/ogg",   // OGG/OGX media format
+        "application/grpc",  // gRPC
+        "text/event-stream", // Server-Sent Events
+        // pre-compressed formats
+        "application/x-bzip", "application/x-bzip2",
+        "application/gzip",
+        "application/zip", "application/x-zip", "x-zip-compressed", "application/x-zip-compressed",
+        "application/x-7z-compressed",
+        "application/vnd.rar", "application/x-rar-compressed",
+    ];
+
+    #[cfg(feature = "mime_db")]
+    let patterns = built_in_patterns.into_iter().chain(mime_db::list_mimes().filter_map(|(mime, info)| {
+        // skip generic media types already defined
+        if mime.starts_with("image/") || mime.starts_with("video/") || mime.starts_with("audio/") {
+            return None;
+        }
+
+        (info.compressible == mime_db::Compressible::No).then_some(mime)
+    }));
+
+    #[cfg(not(feature = "mime_db"))]
+    let patterns = built_in_patterns.into_iter();
+
+    AhoCorasickBuilder::new()
+        .ascii_case_insensitive(true) // may as well
+        .match_kind(MatchKind::LeftmostFirst)
+        .start_kind(StartKind::Anchored)
+        .build(patterns)
+        .expect("Failed to build AhoCorasick matcher for incompressible MIME types")
+});
+
 impl Predicate for DefaultPredicate {
     fn should_compress(&self, parts: &ResponseParts) -> bool {
         let mut should_compress = match content_size(parts) {
@@ -75,30 +114,6 @@ impl Predicate for DefaultPredicate {
 
         should_compress = should_compress && {
             let ty = content_type(parts);
-
-            use aho_corasick::{AhoCorasick, AhoCorasickBuilder, Anchored, Input, MatchKind, StartKind};
-            use std::sync::LazyLock;
-
-            #[rustfmt::skip]
-            static INCOMPRESSIBLE_MIMES: LazyLock<AhoCorasick> = LazyLock::new(|| {
-                AhoCorasickBuilder::new()
-                    .ascii_case_insensitive(true) // may as well
-                    .match_kind(MatchKind::LeftmostFirst)
-                    .start_kind(StartKind::Anchored)
-                    .build([
-                        "image/", "video/", "audio/", // media types
-                        "application/ogg",   // OGG/OGX media format
-                        "application/grpc",  // gRPC
-                        "text/event-stream", // Server-Sent Events
-                        // pre-compressed formats
-                        "application/x-bzip", "application/x-bzip2",
-                        "application/gzip",
-                        "application/zip", "application/x-zip", "x-zip-compressed", "application/x-zip-compressed",
-                        "application/x-7z-compressed",
-                        "application/vnd.rar",
-                    ])
-                    .expect("Failed to build AhoCorasick")
-            });
 
             !INCOMPRESSIBLE_MIMES.is_match(Input::new(ty).anchored(Anchored::Yes))
                 || ty.starts_with("image/svg+xml")
