@@ -6,6 +6,9 @@ pub mod convert_body;
 pub mod handle_error;
 pub mod method_override;
 
+#[cfg(any(feature = "json", feature = "cbor"))]
+pub mod deferred;
+
 #[cfg(feature = "gcra")]
 pub mod rate_limit;
 

@@ -28,6 +28,8 @@ pub use form::Form;
 pub mod disposition;
 pub use disposition::Disposition;
 
+pub mod deferred;
+
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
     #[error("Hyper error: {0}")]
@@ -44,16 +46,19 @@ pub enum BodyError {
 
     #[error(transparent)]
     Generic(Box<dyn Error + Send + Sync + 'static>),
+
+    #[error("Deferred Body is not fully converted, make sure `Deferred` responses are used with `DeferredEncoding` layer")]
+    DeferredNotConverted,
 }
 
 #[derive(Default)]
 #[repr(transparent)]
 #[must_use]
-pub struct Body(BodyInner);
+pub struct Body(pub(crate) BodyInner);
 
 #[derive(Default)]
 #[pin_project::pin_project(project = BodyProj)]
-enum BodyInner {
+pub(crate) enum BodyInner {
     #[default]
     Empty,
     Incoming(#[pin] hyper::body::Incoming),
@@ -62,6 +67,8 @@ enum BodyInner {
     Stream(#[pin] StreamBody<futures::stream::BoxStream<'static, Result<Frame<Bytes>, BodyError>>>),
     //Buf(#[pin] Full<Pin<Box<dyn Buf + Send + 'static>>>),
     Dyn(#[pin] Pin<Box<dyn HttpBody<Data = Bytes, Error = BodyError> + Send + 'static>>),
+
+    Deferred(deferred::Deferred),
 }
 
 // assert Send
@@ -109,6 +116,8 @@ impl HttpBody for BodyInner {
             BodyProj::Channel(stream) => stream.poll_frame(cx),
             BodyProj::Stream(stream) => stream.poll_frame(cx),
             BodyProj::Dyn(body) => body.poll_frame(cx),
+
+            BodyProj::Deferred(_) => Poll::Ready(Some(Err(BodyError::DeferredNotConverted))),
         }
     }
 
@@ -120,6 +129,7 @@ impl HttpBody for BodyInner {
             Self::Channel(inner) => inner.is_end_stream(),
             Self::Stream(inner) => inner.is_end_stream(),
             Self::Dyn(inner) => inner.is_end_stream(),
+            Self::Deferred(_) => false,
         }
     }
 
@@ -131,6 +141,7 @@ impl HttpBody for BodyInner {
             Self::Channel(inner) => inner.size_hint(),
             Self::Stream(inner) => inner.size_hint(),
             Self::Dyn(inner) => inner.size_hint(),
+            Self::Deferred(_) => hyper::body::SizeHint::default(),
         }
     }
 }

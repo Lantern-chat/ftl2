@@ -153,6 +153,10 @@ pub(crate) fn body_error_to_response(err: BodyError) -> Response {
                 StatusCode::INTERNAL_SERVER_ERROR,
             ),
         },
+        BodyError::DeferredNotConverted => (
+            Cow::Borrowed("Deferred Body is not fully converted, make sure `Deferred` responses are used with `DeferredEncoding` layer"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
     })
 }
 
