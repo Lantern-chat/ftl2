@@ -1,10 +1,15 @@
 use std::time::Duration;
 
 use ftl::{
-    body::{Cbor, Json},
-    extract::{one_of::OneOf, real_ip::RealIpPrivacyMask, Extension, MatchedPath},
+    body::{deferred::Deferred, Cbor, Json},
+    extract::{
+        one_of::{OneOf, OneOfAny},
+        real_ip::RealIpPrivacyMask,
+        Extension, MatchedPath,
+    },
     layers::{
         compression::CompressionLayer,
+        deferred::DeferredEncoding,
         rate_limit::{gcra::Quota, RateLimitLayerBuilder},
     },
     rewrite::RewriteService,
@@ -51,7 +56,8 @@ async fn main() {
         .get("/", placeholder)
         .get("/hello", placeholder)
         .get("/test", test)
-        .post("/body", with_body);
+        .post("/body", with_body)
+        .post("/any_body", with_any_body);
 
     // create server to bind at localhost:8083, under https
     let mut server = Server::bind(["0.0.0.0:8083".parse().unwrap()]);
@@ -74,7 +80,8 @@ async fn main() {
         server.acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor)).serve(
             FtlServiceToHyperMakeService::new(
                 // Convert the `Incoming` body to FTL Body type and call the service
-                (RealIpLayer, CompressionLayer::new()).layer(router.route_layer(rate_limit)),
+                (RealIpLayer, CompressionLayer::new())
+                    .layer(router.route_layer((rate_limit, DeferredEncoding::default()))),
             ),
         ),
     );
@@ -112,7 +119,7 @@ struct Test {
 async fn test() -> impl IntoResponse {
     let mut i = 0;
 
-    Json::stream_simple_array(
+    Deferred::simple_stream(
         futures::stream::repeat_with(move || Test {
             a: {
                 i += 1;
@@ -125,5 +132,9 @@ async fn test() -> impl IntoResponse {
 }
 
 async fn with_body(OneOf(value): OneOf<Test, (Json, Cbor)>) {
+    println!("{}, {}", value.a, value.b);
+}
+
+async fn with_any_body(OneOf(value): OneOfAny<Test>) {
     println!("{}, {}", value.a, value.b);
 }

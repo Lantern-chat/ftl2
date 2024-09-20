@@ -87,7 +87,10 @@ impl IntoResponseParts for () {
 impl IntoResponseParts for StatusCode {
     #[inline]
     fn into_response_parts(self, parts: &mut ResponseParts) {
-        parts.status = self;
+        // only set the status if it is not already set
+        if parts.status == StatusCode::OK {
+            parts.status = self;
+        }
     }
 }
 
