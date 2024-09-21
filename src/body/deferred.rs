@@ -56,7 +56,7 @@ impl IntoResponse for Deferred {
     }
 }
 
-pub(crate) trait IndirectSerialize {
+pub(crate) trait IndirectSerialize: Send + 'static {
     #[cfg(feature = "json")]
     fn as_json(&self) -> Response;
 
@@ -64,7 +64,7 @@ pub(crate) trait IndirectSerialize {
     fn as_cbor(&self) -> Response;
 }
 
-pub(crate) trait IndirectStream {
+pub(crate) trait IndirectStream: Send + 'static {
     #[cfg(feature = "json")]
     fn as_json(&mut self) -> Response;
 
@@ -77,7 +77,7 @@ const _: Option<&dyn IndirectStream> = None;
 
 impl<T> IndirectSerialize for T
 where
-    T: serde::Serialize,
+    T: serde::Serialize + Send + 'static,
 {
     #[cfg(feature = "json")]
     fn as_json(&self) -> Response {

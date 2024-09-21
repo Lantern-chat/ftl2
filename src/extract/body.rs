@@ -157,6 +157,10 @@ pub(crate) fn body_error_to_response(err: BodyError) -> Response {
             Cow::Borrowed("Deferred Body is not fully converted, make sure `Deferred` responses are used with `DeferredEncoding` layer"),
             StatusCode::INTERNAL_SERVER_ERROR,
         ),
+        BodyError::ArbitraryBodyPolled => (
+            Cow::Borrowed("Arbitrary Body Polled, this is a bug"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
     })
 }
 

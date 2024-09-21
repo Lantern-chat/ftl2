@@ -30,6 +30,8 @@ pub use disposition::Disposition;
 
 pub mod deferred;
 
+mod arbitrary;
+
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
     #[error("Hyper error: {0}")]
@@ -49,6 +51,9 @@ pub enum BodyError {
 
     #[error("Deferred Body is not fully converted, make sure `Deferred` responses are used with `DeferredEncoding` layer")]
     DeferredNotConverted,
+
+    #[error("Arbitrary Body Polled, this is a bug")]
+    ArbitraryBodyPolled,
 }
 
 #[derive(Default)]
@@ -69,6 +74,8 @@ pub(crate) enum BodyInner {
     Dyn(#[pin] Pin<Box<dyn HttpBody<Data = Bytes, Error = BodyError> + Send + 'static>>),
 
     Deferred(deferred::Deferred),
+
+    Arbitrary(arbitrary::SmallArbitraryData),
 }
 
 // assert Send
@@ -118,6 +125,7 @@ impl HttpBody for BodyInner {
             BodyProj::Dyn(body) => body.poll_frame(cx),
 
             BodyProj::Deferred(_) => Poll::Ready(Some(Err(BodyError::DeferredNotConverted))),
+            BodyProj::Arbitrary(_) => Poll::Ready(Some(Err(BodyError::ArbitraryBodyPolled))),
         }
     }
 
@@ -130,6 +138,7 @@ impl HttpBody for BodyInner {
             Self::Stream(inner) => inner.is_end_stream(),
             Self::Dyn(inner) => inner.is_end_stream(),
             Self::Deferred(_) => false,
+            Self::Arbitrary(_) => false,
         }
     }
 
@@ -142,6 +151,7 @@ impl HttpBody for BodyInner {
             Self::Stream(inner) => inner.size_hint(),
             Self::Dyn(inner) => inner.size_hint(),
             Self::Deferred(_) => hyper::body::SizeHint::default(),
+            Self::Arbitrary(_) => hyper::body::SizeHint::default(),
         }
     }
 }
@@ -232,6 +242,34 @@ impl Body {
         B: HttpBody<Data = Bytes, Error = BodyError> + Send + 'static,
     {
         Body(BodyInner::Dyn(Box::pin(body)))
+    }
+
+    /// Create a new body from an arbitrary type to be accessed later,
+    /// currently limited to payloads of 32 bytes or less.
+    ///
+    /// # Safety
+    ///
+    /// The value may be arbitrarily moved, so `pin` is not guaranteed.
+    pub unsafe fn arbitrary<T: 'static>(body: T) -> Body {
+        Body(BodyInner::Arbitrary(arbitrary::SmallArbitraryData::new(body)))
+    }
+
+    /// Returns `true` if the body is an arbitrary value.
+    pub fn is_arbitrary(&self) -> bool {
+        matches!(self.0, BodyInner::Arbitrary(_))
+    }
+
+    /// Takes the arbitrary value if it is the correct type and replaces it with an empty body.
+    pub fn take_arbitrary<T: 'static>(&mut self) -> Option<T> {
+        match self.0 {
+            BodyInner::Arbitrary(ref data) if data.same_ty::<T>() => unsafe {
+                let value = data.read();
+                // don't let the value drop after move
+                core::mem::forget(core::mem::replace(&mut self.0, BodyInner::Empty));
+                Some(value.assume_init())
+            },
+            _ => None,
+        }
     }
 }
 
