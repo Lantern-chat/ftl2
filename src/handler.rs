@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use core::future::{Future, IntoFuture};
 use std::sync::Arc;
 
@@ -9,37 +11,75 @@ use crate::{
 };
 
 pub trait Handler<T, S>: Clone + Send + Sync + 'static {
-    fn call(self, req: Request, state: S) -> impl Future<Output = Response> + Send + 'static;
+    type Output: 'static;
+
+    fn call(self, req: Request, state: S) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
-impl<Func, R, Fut, Res, S> Handler<((),), S> for Func
+/// Maps the Handler output to a Response via `IntoResponse`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[repr(transparent)]
+pub struct HandlerIntoResponse<H>(pub H);
+
+impl<H, S, T> Handler<T, S> for HandlerIntoResponse<H>
 where
-    Func: FnOnce() -> R + Clone + Send + Sync + 'static,
-    R: IntoFuture<IntoFuture = Fut> + Send,
-    Fut: Future<Output = Res> + Send,
-    Res: IntoResponse,
+    H: Handler<T, S, Output: IntoResponse>,
+    S: Send + 'static,
+{
+    type Output = Response;
+
+    fn call(self, req: Request, state: S) -> impl Future<Output = Self::Output> + Send + 'static {
+        // this is a very common code path, so I want the future here to be as optimized as possible
+
+        #[pin_project::pin_project]
+        #[repr(transparent)]
+        struct ResponseFuture<F>(#[pin] F);
+
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        impl<F: Future<Output: IntoResponse>> Future for ResponseFuture<F> {
+            type Output = Response;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+                self.project().0.poll(cx).map(IntoResponse::into_response)
+            }
+        }
+
+        ResponseFuture(self.0.call(req, state))
+    }
+}
+
+impl<Func, FRes, Fut, S> Handler<((),), S> for Func
+where
+    Func: FnOnce() -> FRes + Clone + Send + Sync + 'static,
+    FRes: IntoFuture<IntoFuture = Fut>,
+    Fut: Future<Output: 'static> + Send,
     S: Send + Sync + 'static,
 {
-    fn call(self, _req: Request, _state: S) -> impl Future<Output = Response> + Send + 'static {
-        async move { self().await.into_response() }
+    type Output = Fut::Output;
+
+    fn call(self, _req: Request, _state: S) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move { self().await }
     }
 }
 
 macro_rules! impl_handler {
     ([$($t:ident),*], $last:ident) => {
-        // NOTE: The `Z` parameter avoid conflicts, and is not used.
-        impl<Func, R, Fut, S, Res, Z, $($t,)* $last> Handler<(Z, $($t,)* $last,), S> for Func
+        // NOTE: The `Z` parameter avoids conflicts, and is not used.
+        impl<Func, R, Fut, S, $($t,)* $last, Z> Handler<(Z, $($t,)* $last,), S> for Func
         where
             Func: FnOnce($($t,)* $last) -> R + Clone + Send + Sync + 'static,
-            R: IntoFuture<IntoFuture = Fut> + Send,
-            Fut: Future<Output = Res> + Send,
-            Res: IntoResponse,
             S: Send + Sync + 'static,
-            $($t: FromRequestParts<S> + Send,)*
-            $last: FromRequest<S, Z> + Send,
+            R: IntoFuture<IntoFuture = Fut>,
+            Fut: Future<Output: 'static> + Send,
+            $($t: FromRequestParts<S>,)*
+            $last: FromRequest<S, Z>,
         {
+            type Output = Result<Fut::Output, Response>;
+
             #[allow(non_snake_case)]
-            fn call(self, req: Request, state: S) -> impl Future<Output = Response> + Send + 'static {
+            fn call(self, req: Request, state: S) -> impl Future<Output = Self::Output> + Send + 'static {
                 async move {
                     #[allow(unused_mut)]
                     let (mut parts, body) = req.into_parts();
@@ -47,16 +87,16 @@ macro_rules! impl_handler {
                     $(
                         let $t = match $t::from_request_parts(&mut parts, &state).await {
                             Ok(t) => t,
-                            Err(rejection) => return rejection.into_response(),
+                            Err(rejection) => return Err(rejection.into_response()),
                         };
                     )*
 
                     let $last = match $last::from_request(Request::from_parts(parts, body), &state).await {
                         Ok(t) => t,
-                        Err(rejection) => return rejection.into_response(),
+                        Err(rejection) => return Err(rejection.into_response()),
                     };
 
-                    self($($t,)* $last).await.into_response()
+                    Ok(self($($t,)* $last).await)
                 }
             }
         }
@@ -65,9 +105,9 @@ macro_rules! impl_handler {
 
 all_the_tuples!(impl_handler);
 
+#[allow(missing_debug_implementations)]
 mod private {
     // Marker type for `impl<T: IntoResponse> Handler for T`
-    #[allow(missing_debug_implementations)]
     pub enum IntoResponseHandler {}
 }
 
@@ -75,55 +115,64 @@ impl<T, S> Handler<private::IntoResponseHandler, S> for T
 where
     T: IntoResponse + Clone + Send + Sync + 'static,
 {
+    type Output = Response;
+
     fn call(self, _req: Request, _state: S) -> impl Future<Output = Response> + Send + 'static {
         std::future::ready(self.into_response())
     }
 }
 
-/// A type-erased handler, equivalent to `Arc<dyn Handler<..., S>>`.
-pub(crate) struct BoxedErasedHandler<S>(pub Arc<dyn ErasedHandler<S>>);
+/// A type-erased handler, equivalent to `Arc<dyn Handler<..., S, Output = R>>`.
+pub(crate) struct BoxedErasedHandler<S, R>(pub Arc<dyn ErasedHandler<S, R>>);
 
-impl<S> Clone for BoxedErasedHandler<S> {
+// fn assert_sync<S: Send + Sync>() {}
+// const _: () = {
+//     assert_sync::<BoxedErasedHandler<u32, Response>>();
+// };
+
+impl<S, R> Clone for BoxedErasedHandler<S, R> {
     fn clone(&self) -> Self {
         BoxedErasedHandler(self.0.clone())
     }
 }
 
-/// Effectively identical to `dyn Handler<T, S>`, but without needing to specify
+/// Effectively identical to `dyn Handler<T, S, Output = R>`, but without needing to specify
 /// the `T` type parameters. Instead of a vtable, we have a single function
 /// pointer, which is more efficient.
-struct MakeErasedHandler<H, S> {
+struct MakeErasedHandler<H, S, R> {
     handler: H,
-    call: fn(H, Request, S) -> BoxFuture<'static, Response>,
+    call: fn(H, Request, S) -> BoxFuture<'static, R>,
 }
 
-/// A trait object for `Handler<T, S>`, but without needing to specify the `T`
-pub(crate) trait ErasedHandler<S>: Send + Sync + 'static {
-    fn call(&self, req: Request, state: S) -> BoxFuture<'static, Response>;
+/// A trait object for `Handler<T, S, Output = R>`, but without needing to specify the `T`
+pub(crate) trait ErasedHandler<S, R>: Send + Sync + 'static {
+    fn call(&self, req: Request, state: S) -> BoxFuture<'static, R>;
 }
 
-impl<H, S> ErasedHandler<S> for MakeErasedHandler<H, S>
+impl<H, S, R> ErasedHandler<S, R> for MakeErasedHandler<H, S, R>
 where
     H: Clone + Send + Sync + 'static,
     S: Send + Sync + 'static,
+    R: 'static,
 {
-    fn call(&self, req: Request, state: S) -> BoxFuture<'static, Response> {
+    fn call(&self, req: Request, state: S) -> BoxFuture<'static, R> {
         (self.call)(self.handler.clone(), req, state)
     }
 }
 
-impl<S> BoxedErasedHandler<S>
+impl<S, R> BoxedErasedHandler<S, R>
 where
     S: Clone + Send + Sync + 'static,
+    R: 'static,
 {
-    pub fn erase<T>(handler: impl Handler<T, S>) -> Self {
+    pub fn erase<T>(handler: impl Handler<T, S, Output = R>) -> Self {
         BoxedErasedHandler(Arc::new(MakeErasedHandler {
             handler,
             call: |handler, req, state| Box::pin(handler.call(req, state)),
         }))
     }
 
-    pub fn call(&self, req: Request, state: S) -> BoxFuture<'static, Response> {
+    pub fn call(&self, req: Request, state: S) -> BoxFuture<'static, R> {
         self.0.call(req, state)
     }
 }
@@ -135,8 +184,10 @@ mod tests {
     use super::*;
 
     fn _test_handler() {
-        async fn my_handler(State(_): State<u32>) {}
+        async fn my_handler(State(_): State<u32>) -> String {
+            "test".to_string()
+        }
 
-        let _x: BoxedErasedHandler<u32> = BoxedErasedHandler::erase(my_handler);
+        let _x: BoxedErasedHandler<u32, Response> = BoxedErasedHandler::erase(HandlerIntoResponse(my_handler));
     }
 }

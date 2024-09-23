@@ -8,8 +8,10 @@ use ftl::{
         Extension, MatchedPath,
     },
     layers::{
-        compression::CompressionLayer,
+        //compression::CompressionLayer,
+        convert_body::ConvertBody,
         deferred::DeferredEncoding,
+        normalize::Normalize,
         rate_limit::{gcra::Quota, RateLimitLayerBuilder},
     },
     rewrite::RewriteService,
@@ -22,7 +24,7 @@ use ftl::{
         TlsConfig,
     },
     service::FtlServiceToHyperMakeService,
-    IntoResponse, Layer,
+    IntoResponse, Layer, Response,
 };
 
 use ftl::extract::real_ip::{RealIp, RealIpLayer};
@@ -40,7 +42,7 @@ async fn main() {
     let tls_config = RustlsConfig::from_pem_file("ecdsa_certificate.pem", "ecdsa_private_key.pem").await.unwrap();
 
     // create Router with empty state, could be replaced with any type
-    let mut router = Router::with_state(());
+    let mut router = Router::<_, Response>::with_state(());
 
     // setup rate limit layer
     let rate_limit = RateLimitLayerBuilder::<RateLimitKey>::new()
@@ -79,9 +81,11 @@ async fn main() {
         // set acceptor to use the tls config, and set that acceptor to use NoDelay
         server.acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor)).serve(
             FtlServiceToHyperMakeService::new(
-                // Convert the `Incoming` body to FTL Body type and call the service
-                (RealIpLayer, CompressionLayer::new())
-                    .layer(router.route_layer((rate_limit, DeferredEncoding::default()))),
+                (RealIpLayer, /*, CompressionLayer::new(),*/ Normalize::default()).layer(router.route_layer((
+                    rate_limit,
+                    ConvertBody::default(),
+                    DeferredEncoding::default(),
+                ))),
             ),
         ),
     );

@@ -34,10 +34,9 @@ pub(crate) fn insert_url_params(extensions: &mut Extensions, params: matchit::Pa
         .iter()
         .map(|(k, v)| {
             let key = Arc::from(k);
-            if let Some(decoded) = PercentDecodedStr::new(v) {
-                Ok((key, decoded))
-            } else {
-                Err(key)
+            match PercentDecodedStr::new(v) {
+                Some(decoded) => Ok((key, decoded)),
+                None => Err(key),
             }
         })
         .collect::<Result<Vec<_>, _>>();

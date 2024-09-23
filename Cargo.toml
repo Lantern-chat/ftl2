@@ -75,7 +75,7 @@ serde_html_form = { version = "0.2", optional = true }
 mime_db = { git = "https://github.com/Lantern-chat/mime_db", optional = true }
 
 [features]
-default = ["tls-rustls", "gcra", "json", "cbor", "json-simd", "serde_html_form", "compression-all", "mime_db"]
+default = ["tls-rustls", "gcra", "json", "cbor"]
 tls-rustls = ["tls-rustls-no-provider", "rustls/aws-lc-rs"]
 tls-rustls-no-provider = ["arc-swap", "rustls", "rustls-pemfile", "tokio/fs", "tokio/time", "tokio-rustls", "rustls-pki-types"]
 tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
