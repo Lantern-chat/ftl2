@@ -107,6 +107,10 @@ where
         }
     }
 
+    pub fn state(&self) -> &STATE {
+        &self.state
+    }
+
     pub fn route_layer<L>(self, layer: L) -> Router<STATE, RETURN, L::Service>
     where
         L: Layer<SERVICE>,
@@ -365,11 +369,7 @@ where
     }
 }
 
-impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE>
-where
-    STATE: Clone + Send + Sync + 'static,
-    RETURN: 'static,
-{
+impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
     pub(crate) fn match_route<'p>(
         &self,
         method: &Method,
