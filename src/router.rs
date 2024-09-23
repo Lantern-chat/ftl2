@@ -80,7 +80,7 @@ pub struct Router<STATE, RETURN = Response, SERVICE = HandlerService<STATE, RETU
     routes: HashMap<NodeId, Route<SERVICE>, rustc_hash::FxRandomState>,
     state: STATE,
     counter: u64,
-    _return: PhantomData<RETURN>,
+    _return: PhantomData<fn() -> RETURN>,
 }
 
 impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE>
@@ -430,23 +430,6 @@ use crate::IntoResponse;
 use crate::{
     service::{Service, ServiceFuture},
     Request, Response,
-};
-
-// RETURN is not actually stored in the Router, so just implement these
-const _: () = {
-    unsafe impl<STATE, RETURN, SERVICE> Send for Router<STATE, RETURN, SERVICE>
-    where
-        STATE: Send,
-        SERVICE: Send,
-    {
-    }
-
-    unsafe impl<STATE, RETURN, SERVICE> Sync for Router<STATE, RETURN, SERVICE>
-    where
-        STATE: Sync,
-        SERVICE: Sync,
-    {
-    }
 };
 
 impl<STATE, RETURN, SERVICE, B> Service<http::Request<B>> for Router<STATE, RETURN, SERVICE>
