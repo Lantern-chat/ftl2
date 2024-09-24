@@ -58,6 +58,12 @@ where
                 resp = resp.map(|_| Body::empty());
             }
 
+            // http://www.gnuterrypratchett.com/
+            resp.headers_mut().insert(
+                http::HeaderName::from_static("x-clacks-overhead"),
+                http::HeaderValue::from_static("GNU Terry Pratchett"),
+            );
+
             Ok(resp)
         })
     }
