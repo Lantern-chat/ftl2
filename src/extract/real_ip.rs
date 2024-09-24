@@ -62,6 +62,27 @@ impl From<RealIp> for RealIpPrivacyMask {
     }
 }
 
+impl From<RealIpPrivacyMask> for RealIp {
+    #[inline]
+    fn from(mask: RealIpPrivacyMask) -> Self {
+        mask.0
+    }
+}
+
+impl From<RealIp> for IpAddr {
+    #[inline]
+    fn from(ip: RealIp) -> Self {
+        ip.0
+    }
+}
+
+impl From<RealIpPrivacyMask> for IpAddr {
+    #[inline]
+    fn from(mask: RealIpPrivacyMask) -> Self {
+        mask.0.into()
+    }
+}
+
 impl Debug for RealIp {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
