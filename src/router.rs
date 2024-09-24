@@ -3,7 +3,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use futures::{FutureExt, TryFutureExt};
+use futures::FutureExt as _;
 use http::{Method, StatusCode};
 
 use tower_layer::Layer;
@@ -415,14 +415,50 @@ impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
             None => Err(self.routes.get(&0)),
         }
     }
+}
 
-    pub fn finish(self) -> impl Service<Request, Response = RETURN, Error = StatusCode>
+impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE>
+where
+    STATE: Clone + Send + Sync + 'static,
+    SERVICE: Service<Request, Response = RETURN, Error = Infallible> + 'static,
+    RETURN: Send + 'static,
+{
+    pub fn finish<B>(self) -> impl Service<http::Request<B>, Response = RETURN, Error = StatusCode>
     where
-        STATE: Clone + Send + Sync + 'static,
-        SERVICE: Service<Request, Response = RETURN, Error = Infallible> + 'static,
-        RETURN: Send + 'static,
+        B: http_body::Body<Data = bytes::Bytes, Error: std::error::Error + Send + Sync + 'static> + Send + 'static,
     {
         self.route_layer(crate::layers::convert_body::ConvertBody::default())
+    }
+}
+
+impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE>
+where
+    STATE: Clone + Send + Sync + 'static,
+    RETURN: Send + 'static,
+{
+    pub async fn call_opt<B>(&self, req: http::Request<B>) -> Result<Option<RETURN>, SERVICE::Error>
+    where
+        SERVICE: Service<http::Request<B>, Response = RETURN> + 'static,
+        B: Send,
+    {
+        let (mut parts, body) = req.into_parts();
+
+        let route = match self.match_route(&parts.method, parts.uri.path()) {
+            Ok(match_) => {
+                crate::params::insert_url_params(&mut parts.extensions, match_.params);
+
+                parts.extensions.insert(MatchedPath(match_.value.path.clone()));
+
+                match_.value
+            }
+            Err(Some(fallback)) => fallback,
+            Err(None) => return Ok(None),
+        };
+
+        match route.service.call(http::Request::from_parts(parts, body)).await {
+            Ok(res) => Ok(Some(res)),
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -437,28 +473,18 @@ where
     STATE: Clone + Send + Sync + 'static,
     SERVICE: Service<http::Request<B>, Response = RETURN, Error = Infallible> + 'static,
     RETURN: Send + 'static,
+    B: Send,
 {
     type Response = RETURN;
     type Error = StatusCode;
 
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        use futures::future::Either;
-
-        let (mut parts, body) = req.into_parts();
-
-        let route = match self.match_route(&parts.method, parts.uri.path()) {
-            Ok(match_) => {
-                crate::params::insert_url_params(&mut parts.extensions, match_.params);
-
-                parts.extensions.insert(MatchedPath(match_.value.path.clone()));
-
-                match_.value
+        async move {
+            match self.call_opt(req).await {
+                Ok(Some(resp)) => Ok(resp),
+                Ok(None) => Err(StatusCode::NOT_FOUND),
             }
-            Err(Some(fallback)) => fallback,
-            Err(None) => return Either::Right(std::future::ready(Err(StatusCode::NOT_FOUND))),
-        };
-
-        Either::Left(route.service.call(http::Request::from_parts(parts, body)).map_err(|err| match err {}))
+        }
     }
 }
 
