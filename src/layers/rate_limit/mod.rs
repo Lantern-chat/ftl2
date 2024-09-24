@@ -245,10 +245,16 @@ where
     K: Clone,
 {
     fn set_extension(&self, req: &mut Extensions, key: &RouteWithKey<K>, layer: RateLimitLayer<K>) {
-        req.insert(extensions::RateLimiter {
+        let rl = extensions::RateLimiter {
             key: key.clone(),
             layer,
-        });
+        };
+
+        if let Some(cb) = req.get::<extensions::RateLimiterCallback<K>>() {
+            cb.set(rl.clone())
+        }
+
+        req.insert(rl);
     }
 }
 
@@ -646,6 +652,8 @@ where
 /// Defines the [`RateLimiter`](extensions::RateLimiter) extension for the request's extensions,
 /// extractable with [`Extension<RateLimiter<Key>>`](crate::extract::Extension).
 pub mod extensions {
+    use std::sync::OnceLock;
+
     use super::*;
 
     /// [`Request`] extension to access the internal rate limiter used during that request,
@@ -653,6 +661,7 @@ pub mod extensions {
     ///
     /// Note that the `K: Key` type must be the
     /// exact same as those given to the [`RateLimitLayerBuilder`]/[`RateLimitLayer`].
+    #[must_use]
     pub struct RateLimiter<K: Key = ()> {
         pub(super) key: RouteWithKey<K>,
         pub(super) layer: RateLimitLayer<K>,
@@ -720,6 +729,38 @@ pub mod extensions {
         /// See [`gcra::RateLimiter::clean_sync`] for more information.
         pub fn clean_sync(&self, before: Instant) {
             self.layer.limiter.clean_sync(before);
+        }
+    }
+
+    #[must_use]
+    pub struct RateLimiterCallback<K: Key = ()> {
+        cb: Arc<OnceLock<RateLimiter<K>>>,
+    }
+
+    impl<K: Key> Clone for RateLimiterCallback<K> {
+        fn clone(&self) -> Self {
+            Self { cb: self.cb.clone() }
+        }
+    }
+
+    impl<K: Key> Default for RateLimiterCallback<K> {
+        fn default() -> Self {
+            Self {
+                cb: Arc::new(OnceLock::new()),
+            }
+        }
+    }
+
+    impl<K: Key> RateLimiterCallback<K> {
+        #[must_use]
+        pub fn get(&self) -> Option<&RateLimiter<K>> {
+            self.cb.get()
+        }
+
+        pub(crate) fn set(&self, rl: RateLimiter<K>) {
+            if self.cb.set(rl).is_err() {
+                panic!("rate limiter already set");
+            }
         }
     }
 }
