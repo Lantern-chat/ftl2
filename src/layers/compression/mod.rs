@@ -1,6 +1,7 @@
 use std::io;
 use std::sync::Arc;
 
+use headers::HeaderMapExt as _;
 use http::header;
 use http_body::Frame;
 use http_body_util::BodyStream;
@@ -10,7 +11,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 pub use async_compression::Level;
 
 use crate::body::{Body, BodyError};
-use crate::headers::accept_encoding::{AcceptEncoding, Encoding};
+use crate::headers::accept_encoding::{AcceptEncoding, ContentEncoding, FilterEncoding};
 use crate::{Layer, Service};
 
 pub mod predicate;
@@ -20,7 +21,7 @@ use predicate::{DefaultPredicate, Predicate};
 #[derive(Clone, Copy)]
 #[must_use]
 pub struct CompressionLayer<P: Predicate = DefaultPredicate> {
-    accept: AcceptEncoding,
+    filter: FilterEncoding,
     predicate: P,
     level: Level,
 }
@@ -28,7 +29,7 @@ pub struct CompressionLayer<P: Predicate = DefaultPredicate> {
 impl Default for CompressionLayer<DefaultPredicate> {
     fn default() -> Self {
         Self {
-            accept: AcceptEncoding::default(),
+            filter: FilterEncoding::default(),
             predicate: DefaultPredicate,
             level: Level::Default,
         }
@@ -57,28 +58,28 @@ impl CompressionLayer {
     /// Sets whether to enable the gzip encoding.
     #[cfg(feature = "compression-gzip")]
     pub fn gzip(mut self, enable: bool) -> Self {
-        self.accept.set_gzip(enable);
+        self.filter.set_gzip(enable);
         self
     }
 
     /// Sets whether to enable the Deflate encoding.
     #[cfg(feature = "compression-deflate")]
     pub fn deflate(mut self, enable: bool) -> Self {
-        self.accept.set_deflate(enable);
+        self.filter.set_deflate(enable);
         self
     }
 
     /// Sets whether to enable the Brotli encoding.
     #[cfg(feature = "compression-br")]
     pub fn br(mut self, enable: bool) -> Self {
-        self.accept.set_br(enable);
+        self.filter.set_br(enable);
         self
     }
 
     /// Sets whether to enable the Zstd encoding.
     #[cfg(feature = "compression-zstd")]
     pub fn zstd(mut self, enable: bool) -> Self {
-        self.accept.set_zstd(enable);
+        self.filter.set_zstd(enable);
         self
     }
 
@@ -92,7 +93,7 @@ impl CompressionLayer {
     ///
     /// This method is available even if the `gzip` crate feature is disabled.
     pub fn no_gzip(mut self) -> Self {
-        self.accept.set_gzip(false);
+        self.filter.set_gzip(false);
         self
     }
 
@@ -100,7 +101,7 @@ impl CompressionLayer {
     ///
     /// This method is available even if the `deflate` crate feature is disabled.
     pub fn no_deflate(mut self) -> Self {
-        self.accept.set_deflate(false);
+        self.filter.set_deflate(false);
         self
     }
 
@@ -108,7 +109,7 @@ impl CompressionLayer {
     ///
     /// This method is available even if the `br` crate feature is disabled.
     pub fn no_br(mut self) -> Self {
-        self.accept.set_br(false);
+        self.filter.set_br(false);
         self
     }
 
@@ -116,7 +117,7 @@ impl CompressionLayer {
     ///
     /// This method is available even if the `zstd` crate feature is disabled.
     pub fn no_zstd(mut self) -> Self {
-        self.accept.set_zstd(false);
+        self.filter.set_zstd(false);
         self
     }
 
@@ -126,7 +127,7 @@ impl CompressionLayer {
         C: Predicate,
     {
         CompressionLayer {
-            accept: self.accept,
+            filter: self.filter,
             predicate,
             level: self.level,
         }
@@ -161,7 +162,11 @@ where
         &self,
         req: http::Request<ReqBody>,
     ) -> impl crate::service::ServiceFuture<Self::Response, Self::Error> {
-        let encoding = Encoding::from_headers(req.headers(), self.layer.accept);
+        let encoding = req
+            .headers()
+            .typed_get::<AcceptEncoding>()
+            .unwrap_or_default()
+            .preferred_encoding(self.layer.filter);
 
         let inner = self.inner.call(req);
 
@@ -176,7 +181,7 @@ where
                 parts.headers.append(header::VARY, header::ACCEPT_ENCODING.into());
             }
 
-            if !should_compress || encoding == Encoding::Identity {
+            if !should_compress || encoding == ContentEncoding::Identity {
                 return Ok(http::Response::from_parts(parts, Body::from_any_body(body)));
             }
 
@@ -218,18 +223,18 @@ where
             use async_compression::tokio::bufread::{BrotliEncoder, DeflateEncoder, GzipEncoder, ZstdEncoder};
 
             let compressed = match encoding {
-                Encoding::Identity => unreachable!(),
-                Encoding::Deflate => Body::stream(
+                ContentEncoding::Identity => unreachable!(),
+                ContentEncoding::Deflate => Body::stream(
                     ReaderStream::new(DeflateEncoder::with_quality(stream, self.layer.level))
                         .map(map)
                         .chain(trailers),
                 ),
-                Encoding::Gzip => Body::stream(
+                ContentEncoding::Gzip => Body::stream(
                     ReaderStream::new(GzipEncoder::with_quality(stream, self.layer.level))
                         .map(map)
                         .chain(trailers),
                 ),
-                Encoding::Brotli => Body::stream({
+                ContentEncoding::Brotli => Body::stream({
                     // The brotli crate used under the hood here has a default compression level of 11,
                     // which is the max for brotli. This causes extremely slow compression times, so we
                     // manually set a default of 4 here.
@@ -242,7 +247,7 @@ where
 
                     ReaderStream::new(BrotliEncoder::with_quality(stream, level)).map(map).chain(trailers)
                 }),
-                Encoding::Zstd => Body::stream({
+                ContentEncoding::Zstd => Body::stream({
                     // See https://issues.chromium.org/issues/41493659:
                     //  "For memory usage reasons, Chromium limits the window size to 8MB"
                     // See https://datatracker.ietf.org/doc/html/rfc8878#name-window-descriptor
@@ -276,7 +281,7 @@ where
             parts.headers.remove(header::ACCEPT_RANGES);
             parts.headers.remove(header::CONTENT_LENGTH);
 
-            parts.headers.insert(header::CONTENT_ENCODING, encoding.into_header_value());
+            parts.headers.typed_insert(encoding);
 
             Ok(http::Response::from_parts(parts, compressed))
         }
