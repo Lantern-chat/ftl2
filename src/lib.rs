@@ -44,7 +44,10 @@ pub mod tower;
 #[cfg(all(feature = "json-simd", any(target_arch = "x86_64", target_arch = "aarch64")))]
 extern crate sonic_rs as json_impl;
 
-#[cfg(not(all(feature = "json-simd", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+#[cfg(all(
+    feature = "json",
+    not(all(feature = "json-simd", any(target_arch = "x86_64", target_arch = "aarch64")))
+))]
 extern crate serde_json as json_impl;
 
 // serde_html_form is a fork of serde_urlencoded that supports more
