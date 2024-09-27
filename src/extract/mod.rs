@@ -284,16 +284,16 @@ impl<S> FromRequestParts<S> for Method {
     }
 }
 
-impl<S> FromRequestParts<S> for RequestParts {
-    type Rejection = Infallible;
+// impl<S> FromRequestParts<S> for RequestParts {
+//     type Rejection = Infallible;
 
-    fn from_request_parts(
-        parts: &mut RequestParts,
-        _state: &S,
-    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        futures::future::ok(parts.clone())
-    }
-}
+//     fn from_request_parts(
+//         parts: &mut RequestParts,
+//         _state: &S,
+//     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+//         futures::future::ok(parts.clone())
+//     }
+// }
 
 impl<S> FromRequestParts<S> for Uri {
     type Rejection = Infallible;
