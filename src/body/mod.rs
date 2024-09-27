@@ -28,7 +28,10 @@ pub use form::Form;
 pub mod disposition;
 pub use disposition::Disposition;
 
+
+pub mod async_read;
 pub mod deferred;
+pub mod wrap;
 
 mod arbitrary;
 
@@ -239,9 +242,9 @@ impl Body {
 
     pub fn wrap<B>(body: B) -> Body
     where
-        B: HttpBody<Data = Bytes, Error = BodyError> + Send + 'static,
+        B: HttpBody<Data = Bytes, Error: Into<BodyError>> + Send + 'static,
     {
-        Body(BodyInner::Dyn(Box::pin(body)))
+        Body(BodyInner::Dyn(Box::pin(wrap::WrappedBody { body })))
     }
 
     /// Create a new body from an arbitrary type to be accessed later,
