@@ -227,6 +227,17 @@ impl AcceptEncoding {
             zstd: self.zstd.0 > 0,
         }
     }
+
+    #[must_use]
+    pub fn allows(&self, encoding: ContentEncoding) -> bool {
+        match encoding {
+            ContentEncoding::Deflate => self.deflate.0 > 0,
+            ContentEncoding::Gzip => self.gzip.0 > 0,
+            ContentEncoding::Brotli => self.br.0 > 0,
+            ContentEncoding::Zstd => self.zstd.0 > 0,
+            ContentEncoding::Identity => true,
+        }
+    }
 }
 
 impl Header for AcceptEncoding {

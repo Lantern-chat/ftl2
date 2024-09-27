@@ -10,7 +10,7 @@ use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt};
 use http::{header::TRAILER, HeaderName, HeaderValue, Method, StatusCode};
 use percent_encoding::percent_decode_str;
 
-use crate::headers::accept_encoding::{AcceptEncoding, ContentEncoding, FilterEncoding};
+use crate::headers::accept_encoding::{AcceptEncoding, ContentEncoding};
 use headers::{
     AcceptRanges, ContentLength, ContentRange, HeaderMapExt, IfModifiedSince, IfRange, IfUnmodifiedSince,
     LastModified, Range,
@@ -89,7 +89,7 @@ pub trait FileCache<S: Send + Sync> {
     fn open(
         &self,
         path: &Path,
-        accepts: Option<FilterEncoding>,
+        accepts: Option<AcceptEncoding>,
         state: &S,
     ) -> impl Future<Output = io::Result<Self::File>> + Send;
 
@@ -119,7 +119,7 @@ impl<S: Send + Sync, F: FileCache<S>> FileCache<S> for &F {
     fn open(
         &self,
         path: &Path,
-        accepts: Option<FilterEncoding>,
+        accepts: Option<AcceptEncoding>,
         state: &S,
     ) -> impl Future<Output = io::Result<Self::File>> + Send {
         (**self).open(path, accepts, state)
@@ -149,7 +149,7 @@ impl<S: Send + Sync> FileCache<S> for NoCache {
     }
 
     #[inline]
-    async fn open(&self, path: &Path, _accepts: Option<FilterEncoding>, _state: &S) -> io::Result<Self::File> {
+    async fn open(&self, path: &Path, _accepts: Option<AcceptEncoding>, _state: &S) -> io::Result<Self::File> {
         TkFile::open(path).await
     }
 
@@ -323,7 +323,7 @@ async fn file_reply<S: Send + Sync>(
         Some(_) => None,
     };
 
-    let mut file = match cache.open(path, accepts.map(AcceptEncoding::into_filter), state).await {
+    let mut file = match cache.open(path, accepts, state).await {
         Ok(f) => f,
         Err(e) => {
             return match e.kind() {
