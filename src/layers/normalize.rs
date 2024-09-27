@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use futures::FutureExt as _;
-use http::{header, HeaderMap, HeaderValue, Method};
+use http::{header, HeaderMap, HeaderName, HeaderValue, Method};
 use http_body::Body as _;
 
 use crate::{body::Body, service::ServiceFuture, IntoResponse, Layer, Response, Service};
@@ -27,7 +27,16 @@ where
     type Response = Response;
     type Error = Infallible;
 
-    fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
+    fn call(&self, mut req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
+        // This is sometimes used in old browsers without support for PATCH or OPTIONS methods.
+        if let Some(method_override) =
+            req.headers().get(const { HeaderName::from_static("x-http-method-override") })
+        {
+            if let Ok(method_override) = Method::from_bytes(method_override.as_bytes()) {
+                *req.method_mut() = method_override;
+            }
+        }
+
         let method = match *req.method() {
             Method::HEAD => MiniMethod::Head,
             Method::CONNECT => MiniMethod::Connect,
