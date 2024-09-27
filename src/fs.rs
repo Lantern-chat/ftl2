@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use std::{fs::Metadata, io, time::Instant};
 
+use bytes::Bytes;
 use tokio::fs::File as TkFile;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncSeekExt};
 
@@ -27,6 +28,10 @@ impl<T> GenericFile for T where T: Unpin + AsyncRead + AsyncSeek + Send + 'stati
 
 pub trait EncodedFile {
     fn encoding(&self) -> ContentEncoding;
+
+    fn full(&self) -> Option<Bytes> {
+        None
+    }
 }
 
 impl EncodedFile for TkFile {
@@ -366,7 +371,9 @@ async fn file_reply<S: Send + Sync>(
 
                 let mut resp = Response::default();
 
-                if sub_len != len {
+                let is_partial = sub_len != len;
+
+                if is_partial {
                     assert_eq!(encoding, ContentEncoding::Identity);
 
                     *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
@@ -377,15 +384,22 @@ async fn file_reply<S: Send + Sync>(
                 }
 
                 if parts.method == Method::GET {
-                    if start != 0 {
+                    if !is_partial {
+                        if let Some(full) = file.full() {
+                            *resp.body_mut() = full.into();
+                        }
+                    } else if start != 0 {
                         if let Err(e) = file.seek(SeekFrom::Start(start)).await {
                             return crate::Error::IoError(e).into_response();
                         }
                     }
 
-                    *resp.body_mut() = Body::wrap(crate::body::async_read::AsyncReadBody::new(
-                        file, buf_size, req_start, len,
-                    ));
+                    // only create a body if there isn't one already, like from full files
+                    if resp.body().is_empty() {
+                        *resp.body_mut() = Body::wrap(crate::body::async_read::AsyncReadBody::new(
+                            file, buf_size, req_start, len,
+                        ));
+                    }
                 };
 
                 let headers = resp.headers_mut();

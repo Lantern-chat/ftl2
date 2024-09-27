@@ -266,6 +266,11 @@ impl Body {
         Body(BodyInner::Empty)
     }
 
+    /// Returns `true` if the body is empty.
+    pub const fn is_empty(&self) -> bool {
+        matches!(self.0, BodyInner::Empty)
+    }
+
     /// Takes the body, leaving [`Body::empty()`] in its place.
     pub fn take(&mut self) -> Self {
         std::mem::replace(self, Body::empty())
