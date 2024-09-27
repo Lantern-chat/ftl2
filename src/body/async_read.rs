@@ -1,4 +1,4 @@
-use http::{HeaderMap, HeaderName, HeaderValue};
+use headers::HeaderMapExt;
 use http_body::{Body, Frame, SizeHint};
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -6,6 +6,8 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 use std::{io, pin::Pin};
 use tokio::io::{AsyncRead, ReadBuf};
+
+use crate::headers::server_timing::{ServerTiming, ServerTimings};
 
 enum State<R> {
     Reading(R),
@@ -91,20 +93,18 @@ impl<R: AsyncRead> Body for AsyncReadBody<R> {
             State::Reading(r) => r,
             State::Finished => return Poll::Ready(None),
             State::Trailers => {
-                let elapsed = this.start.elapsed().as_secs_f32() * 1000.0;
+                let timings = ServerTimings::new().with(ServerTiming::new("end").elapsed_from(*this.start));
 
                 self.project().reader.set(State::Finished);
 
-                match HeaderValue::from_str(&format!("end;dur={:.4}", elapsed)) {
-                    Ok(value) => {
-                        return Poll::Ready(Some(Ok(Frame::trailers({
-                            let mut trailers = HeaderMap::with_capacity(1);
-                            trailers.insert(const { HeaderName::from_static("server-timing") }, value);
-                            trailers
-                        }))))
-                    }
-                    Err(_) => return Poll::Ready(None), // skip trailers on failure to format
+                let mut trailers = http::HeaderMap::new();
+                trailers.typed_insert(timings);
+
+                if trailers.is_empty() {
+                    return Poll::Ready(None); // skip if timings didn't encode properly
                 }
+
+                return Poll::Ready(Some(Ok(Frame::trailers(trailers))));
             }
         };
 

@@ -206,12 +206,12 @@ impl AcceptEncoding {
             (ContentEncoding::Zstd, self.zstd, filter.zstd),
         ];
 
-        let mut preferred = (ContentEncoding::Identity, QValue(0));
+        let mut preferred = (ContentEncoding::Identity, QValue::zero());
 
         for &(encoding, qval, enable) in list.iter() {
             // if not filtered out, and is requested, and is more preferred
             // we use >= to prefer the later/higher encoding format if equal
-            if enable && qval.0 > 0 && qval >= preferred.1 {
+            if enable && qval.value > 0 && qval >= preferred.1 {
                 preferred = (encoding, qval);
             }
         }
@@ -221,20 +221,20 @@ impl AcceptEncoding {
 
     pub fn into_filter(self) -> FilterEncoding {
         FilterEncoding {
-            gzip: self.gzip.0 > 0,
-            br: self.br.0 > 0,
-            deflate: self.deflate.0 > 0,
-            zstd: self.zstd.0 > 0,
+            gzip: self.gzip.value > 0,
+            br: self.br.value > 0,
+            deflate: self.deflate.value > 0,
+            zstd: self.zstd.value > 0,
         }
     }
 
     #[must_use]
     pub fn allows(&self, encoding: ContentEncoding) -> bool {
         match encoding {
-            ContentEncoding::Deflate => self.deflate.0 > 0,
-            ContentEncoding::Gzip => self.gzip.0 > 0,
-            ContentEncoding::Brotli => self.br.0 > 0,
-            ContentEncoding::Zstd => self.zstd.0 > 0,
+            ContentEncoding::Deflate => self.deflate.value > 0,
+            ContentEncoding::Gzip => self.gzip.value > 0,
+            ContentEncoding::Brotli => self.br.value > 0,
+            ContentEncoding::Zstd => self.zstd.value > 0,
             ContentEncoding::Identity => true,
         }
     }
@@ -260,7 +260,7 @@ impl Header for AcceptEncoding {
                 continue; // ignore bad encodings?
             };
 
-            let mut wildcard = QValue(0);
+            let mut wildcard = QValue::zero();
 
             let encoding = match encoding.trim() {
                 enc if enc.eq_ignore_ascii_case("br") => &mut encodings.br,
@@ -280,7 +280,7 @@ impl Header for AcceptEncoding {
                 None => QValue::one(),
             };
 
-            if wildcard.0 > 0 {
+            if wildcard.value > 0 {
                 encodings.gzip.wildcard(wildcard);
                 encodings.br.wildcard(wildcard);
                 encodings.deflate.wildcard(wildcard);
@@ -297,33 +297,26 @@ impl Header for AcceptEncoding {
 
         let mut s = String::new();
 
-        if self.gzip.0 > 0 {
-            write!(s, "gzip;q={}", self.gzip).unwrap();
-        }
+        let encodings = [
+            (self.gzip, "gzip"),
+            (self.br, "br"),
+            (self.deflate, "deflate"),
+            (self.zstd, "zstd"),
+        ];
 
-        if self.br.0 > 0 {
-            if !s.is_empty() {
-                s.push(',');
+        for encoding in encodings {
+            if encoding.0.value > 0 {
+                if !s.is_empty() {
+                    s.push(',');
+                }
+                write!(s, "{};q={}", encoding.1, encoding.0).unwrap();
             }
-            write!(s, "br;q={}", self.br).unwrap();
-        }
-
-        if self.deflate.0 > 0 {
-            if !s.is_empty() {
-                s.push(',');
-            }
-            write!(s, "deflate;q={}", self.deflate).unwrap();
-        }
-
-        if self.zstd.0 > 0 {
-            if !s.is_empty() {
-                s.push(',');
-            }
-            write!(s, "zstd;q={}", self.zstd).unwrap();
         }
 
         if !s.is_empty() {
-            values.extend(Some(HeaderValue::from_str(&s).expect("invalid header value")));
+            if let Ok(value) = HeaderValue::try_from(s) {
+                values.extend(Some(value));
+            }
         }
     }
 }
@@ -331,16 +324,18 @@ impl Header for AcceptEncoding {
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[must_use]
 #[repr(transparent)]
-pub struct QValue(u16);
+pub struct QValue {
+    value: u16,
+}
 
 use std::fmt;
 
 impl fmt::Display for QValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0 >= 1000 {
+        if self.value >= 1000 {
             f.write_str("1")
         } else {
-            write!(f, "0.{:03}", self.0)
+            write!(f, "0.{:03}", self.value)
         }
     }
 }
@@ -349,7 +344,7 @@ impl QValue {
     #[must_use]
     pub const fn new(value: u16) -> Option<Self> {
         if value <= 1000 {
-            Some(Self(value))
+            Some(Self { value })
         } else {
             None
         }
@@ -357,12 +352,17 @@ impl QValue {
 
     #[inline]
     pub const fn one() -> Self {
-        Self(1000)
+        Self { value: 1000 }
+    }
+
+    #[inline]
+    pub const fn zero() -> Self {
+        Self { value: 0 }
     }
 
     pub fn wildcard(&mut self, new: Self) {
-        if self.0 == 0 {
-            self.0 = new.0;
+        if self.value == 0 {
+            self.value = new.value;
         }
     }
 
@@ -391,7 +391,7 @@ impl QValue {
         // Parse optional decimal point.
         match c.next() {
             Some('.') => (),
-            None => return Some(Self(value)),
+            None => return Some(Self { value }),
             _ => return None,
         };
 
@@ -413,7 +413,7 @@ impl QValue {
                 None => {
                     // No more characters to parse. Check that the value representing the q-value is
                     // in the valid range.
-                    return if value <= 1000 { Some(Self(value)) } else { None };
+                    return if value <= 1000 { Some(Self { value }) } else { None };
                 }
                 _ => return None,
             };
@@ -438,10 +438,10 @@ mod test {
 
         let mut values = vec![];
         let encodings = AcceptEncoding {
-            gzip: QValue(1000),
-            br: QValue(500),
-            deflate: QValue(0),
-            zstd: QValue(250),
+            gzip: QValue::new(1000).unwrap(),
+            br: QValue::new(500).unwrap(),
+            deflate: QValue::new(0).unwrap(),
+            zstd: QValue::new(250).unwrap(),
         };
 
         encodings.encode(&mut values);

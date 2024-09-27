@@ -399,6 +399,8 @@ async fn file_reply<S: Send + Sync>(
                         *resp.body_mut() = Body::wrap(crate::body::async_read::AsyncReadBody::new(
                             file, buf_size, req_start, len,
                         ));
+
+                        resp.headers_mut().insert(TRAILER, const { HeaderValue::from_static("server-timing") });
                     }
                 };
 
@@ -411,8 +413,6 @@ async fn file_reply<S: Send + Sync>(
                 if encoding != ContentEncoding::Identity {
                     headers.typed_insert(encoding);
                 }
-
-                headers.insert(TRAILER, const { HeaderValue::from_static("server-timing") });
 
                 headers.typed_insert(ContentLength(len));
                 headers.typed_insert(AcceptRanges::bytes());

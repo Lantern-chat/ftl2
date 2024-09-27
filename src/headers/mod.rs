@@ -5,6 +5,7 @@ use headers::{ContentType, Header as HeaderType, HeaderMapExt};
 use crate::{extract::FromRequestParts, response::IntoResponseParts, Error, RequestParts, ResponseParts};
 
 pub mod accept_encoding;
+pub mod server_timing;
 
 pub static APPLICATION_CBOR: LazyLock<ContentType> =
     LazyLock::new(|| ContentType::from("application/cbor".parse::<mime::Mime>().unwrap()));
