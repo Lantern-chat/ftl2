@@ -31,14 +31,25 @@ pub trait FromRequest<S, Z = private::ViaRequest>: Sized + Send + 'static {
 impl<S> FromRequest<S> for Request {
     type Rejection = Infallible;
 
+    #[inline(always)]
     fn from_request(req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(req)
+    }
+}
+
+impl<S> FromRequest<S> for RequestParts {
+    type Rejection = Infallible;
+
+    #[inline(always)]
+    fn from_request(req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        futures::future::ok(req.into_parts().0)
     }
 }
 
 impl<S> FromRequest<S> for Body {
     type Rejection = Infallible;
 
+    #[inline(always)]
     fn from_request(req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(req.into_body())
     }
@@ -47,6 +58,7 @@ impl<S> FromRequest<S> for Body {
 impl<S> FromRequest<S> for () {
     type Rejection = Infallible;
 
+    #[inline(always)]
     fn from_request(_req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         futures::future::ok(())
     }
