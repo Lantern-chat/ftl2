@@ -218,6 +218,15 @@ impl AcceptEncoding {
 
         preferred.0
     }
+
+    pub fn into_filter(self) -> FilterEncoding {
+        FilterEncoding {
+            gzip: self.gzip.0 > 0,
+            br: self.br.0 > 0,
+            deflate: self.deflate.0 > 0,
+            zstd: self.zstd.0 > 0,
+        }
+    }
 }
 
 impl Header for AcceptEncoding {

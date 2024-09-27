@@ -81,6 +81,7 @@ tls-rustls-no-provider = ["arc-swap", "rustls", "rustls-pemfile", "tokio/fs", "t
 tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
 tower-service = ["dep:tower-service"]
 gcra = ["dep:scc", "dep:ahash"]
+fs = ["tokio/fs", "mime_db"]
 
 compression-all = ["compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]
 compression-br = ["_meta_compression", "async-compression/brotli"]
