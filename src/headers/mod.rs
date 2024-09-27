@@ -1,11 +1,8 @@
 use std::{future::Future, sync::LazyLock};
 
 use headers::{ContentType, Header as HeaderType, HeaderMapExt};
-use http::StatusCode;
 
-use crate::{
-    extract::FromRequestParts, response::IntoResponseParts, IntoResponse, RequestParts, Response, ResponseParts,
-};
+use crate::{extract::FromRequestParts, response::IntoResponseParts, Error, RequestParts, ResponseParts};
 
 pub mod accept_encoding;
 
@@ -16,27 +13,11 @@ pub static APPLICATION_CBOR: LazyLock<ContentType> =
 #[repr(transparent)]
 pub struct Header<H: HeaderType>(pub H);
 
-pub enum HeaderError {
-    HeaderNotFound(&'static str),
-    InvalidHeader(&'static str, headers::Error),
-}
-
-impl IntoResponse for HeaderError {
-    fn into_response(self) -> Response {
-        IntoResponse::into_response(match self {
-            HeaderError::HeaderNotFound(name) => (format!("Missing Header: {name}"), StatusCode::BAD_REQUEST),
-            HeaderError::InvalidHeader(name, err) => {
-                (format!("Invalid Header: {name}: {err}"), StatusCode::BAD_REQUEST)
-            }
-        })
-    }
-}
-
 impl<S, H> FromRequestParts<S> for Header<H>
 where
     H: HeaderType + Send + 'static,
 {
-    type Rejection = HeaderError;
+    type Rejection = Error;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -45,8 +26,8 @@ where
         async move {
             match parts.headers.typed_try_get::<H>() {
                 Ok(Some(header)) => Ok(Header(header)),
-                Ok(None) => Err(HeaderError::HeaderNotFound(H::name().as_str())),
-                Err(err) => Err(HeaderError::InvalidHeader(H::name().as_str(), err)),
+                Ok(None) => Err(Error::MissingHeader(H::name().as_str())),
+                Err(err) => Err(Error::InvalidHeader(H::name().as_str(), err)),
             }
         }
     }

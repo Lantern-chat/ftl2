@@ -9,7 +9,7 @@ use crate::{IntoResponse, Response};
 use super::FromRequestParts;
 
 #[derive(Debug, thiserror::Error)]
-pub enum SchemeRejection {
+pub enum SchemeError {
     #[error("Invalid scheme: {0}")]
     InvalidScheme(#[from] InvalidUri),
 
@@ -17,17 +17,17 @@ pub enum SchemeRejection {
     MissingScheme,
 }
 
-impl IntoResponse for SchemeRejection {
+impl IntoResponse for SchemeError {
     fn into_response(self) -> Response {
         match self {
-            SchemeRejection::InvalidScheme(_) => ("Invalid Scheme", http::StatusCode::BAD_REQUEST).into_response(),
-            SchemeRejection::MissingScheme => ("Missing Scheme", http::StatusCode::BAD_REQUEST).into_response(),
+            SchemeError::InvalidScheme(_) => ("Invalid Scheme", http::StatusCode::BAD_REQUEST).into_response(),
+            SchemeError::MissingScheme => ("Missing Scheme", http::StatusCode::BAD_REQUEST).into_response(),
         }
     }
 }
 
 impl<S> FromRequestParts<S> for Scheme {
-    type Rejection = SchemeRejection;
+    type Rejection = SchemeError;
 
     fn from_request_parts(
         parts: &mut http::request::Parts,
@@ -68,7 +68,7 @@ impl<S> FromRequestParts<S> for Scheme {
                 return Ok(scheme.clone());
             }
 
-            Err(SchemeRejection::MissingScheme)
+            Err(SchemeError::MissingScheme)
         }
     }
 }

@@ -13,11 +13,8 @@ use std::{
     str::FromStr,
 };
 
-use crate::{
-    extract::FromRequestParts, response::IntoResponse, service::ServiceFuture, Layer, RequestParts, Response,
-    Service,
-};
-use http::{header::HeaderName, HeaderValue, Request, StatusCode};
+use crate::{extract::FromRequestParts, service::ServiceFuture, Layer, RequestParts, Service};
+use http::{header::HeaderName, HeaderValue, Request};
 
 /// Wrapper around [`std::net::IpAddr`] that can be extracted from the request parts.
 ///
@@ -129,18 +126,8 @@ impl Deref for RealIpPrivacyMask {
     }
 }
 
-/// IP Address not found, returns a 400 Bad Request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct IpAddrRejection;
-
-impl IntoResponse for IpAddrRejection {
-    fn into_response(self) -> Response {
-        StatusCode::BAD_REQUEST.into_response()
-    }
-}
-
 impl<S> FromRequestParts<S> for RealIp {
-    type Rejection = IpAddrRejection;
+    type Rejection = crate::Error;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -152,13 +139,13 @@ impl<S> FromRequestParts<S> for RealIp {
                 .get::<RealIp>()
                 .cloned()
                 .or_else(|| get_ip_from_parts(parts))
-                .ok_or(IpAddrRejection),
+                .ok_or(crate::Error::BadRequest),
         )
     }
 }
 
 impl<S> FromRequestParts<S> for RealIpPrivacyMask {
-    type Rejection = IpAddrRejection;
+    type Rejection = crate::Error;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -167,7 +154,7 @@ impl<S> FromRequestParts<S> for RealIpPrivacyMask {
         future::ready(
             match parts.extensions.get::<RealIp>().cloned().or_else(|| get_ip_from_parts(parts)) {
                 Some(ip) => Ok(ip.into()),
-                None => Err(IpAddrRejection),
+                None => Err(crate::Error::BadRequest),
             },
         )
     }

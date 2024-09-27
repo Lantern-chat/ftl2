@@ -30,6 +30,7 @@ pub use http::response::Parts as ResponseParts;
 pub type Request = http::Request<body::Body>;
 pub type Response = http::Response<body::Body>;
 
+pub use crate::error::Error;
 pub use crate::extract::FromRequest;
 pub use crate::layers::Layer;
 pub use crate::response::IntoResponse;

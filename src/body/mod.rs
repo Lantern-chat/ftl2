@@ -28,6 +28,7 @@ pub use form::Form;
 pub mod disposition;
 pub use disposition::Disposition;
 
+use crate::IntoResponse;
 
 pub mod async_read;
 pub mod deferred;
@@ -57,6 +58,64 @@ pub enum BodyError {
 
     #[error("Arbitrary Body Polled, this is a bug")]
     ArbitraryBodyPolled,
+}
+
+impl IntoResponse for BodyError {
+    fn into_response(self) -> crate::Response {
+        use http::StatusCode;
+        use std::borrow::Cow;
+
+        IntoResponse::into_response(match self {
+            BodyError::Generic(e) => (
+                format!("An error occurred while reading the body: {e}").into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            BodyError::Io(e) => (
+                format!("An error occurred while reading the body: {e}").into(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            BodyError::StreamAborted => (
+                Cow::Borrowed("The body stream was aborted"),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            BodyError::LengthLimitError(e) => (
+                format!("The body was too large: {e}").into(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            BodyError::HyperError(err) => match err {
+                _ if err.is_parse_too_large() => {
+                    (Cow::Borrowed("The body was too large"), StatusCode::PAYLOAD_TOO_LARGE)
+                }
+                _ if err.is_body_write_aborted()
+                    || err.is_canceled()
+                    || err.is_closed()
+                    || err.is_incomplete_message() =>
+                {
+                    (
+                        Cow::Borrowed("The request was aborted"),
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                    )
+                }
+                _ if err.is_timeout() => (Cow::Borrowed("The request timed out"), StatusCode::GATEWAY_TIMEOUT),
+                _ if err.is_parse() || err.is_parse_status() => (
+                    Cow::Borrowed("An error occurred while parsing the body"),
+                    StatusCode::BAD_REQUEST,
+                ),
+                _ => (
+                    Cow::Borrowed("An error occurred while reading the body"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+            },
+            BodyError::DeferredNotConverted => (
+                Cow::Borrowed("Deferred Body is not fully converted, make sure `Deferred` responses are used with `DeferredEncoding` layer"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            BodyError::ArbitraryBodyPolled => (
+                Cow::Borrowed("Arbitrary Body Polled, this is a bug"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        })
+    }
 }
 
 #[derive(Default)]

@@ -76,7 +76,7 @@ macro_rules! impl_handler {
             $($t: FromRequestParts<S>,)*
             $last: FromRequest<S, Z>,
         {
-            type Output = Result<Fut::Output, Response>;
+            type Output = Result<Fut::Output, crate::Error>;
 
             #[allow(non_snake_case)]
             fn call(self, req: Request, state: S) -> impl Future<Output = Self::Output> + Send + 'static {
@@ -84,17 +84,9 @@ macro_rules! impl_handler {
                     #[allow(unused_mut)]
                     let (mut parts, body) = req.into_parts();
 
-                    $(
-                        let $t = match $t::from_request_parts(&mut parts, &state).await {
-                            Ok(t) => t,
-                            Err(rejection) => return Err(rejection.into_response()),
-                        };
-                    )*
+                    $(let $t = $t::from_request_parts(&mut parts, &state).await.map_err(Into::into)?;)*
 
-                    let $last = match $last::from_request(Request::from_parts(parts, body), &state).await {
-                        Ok(t) => t,
-                        Err(rejection) => return Err(rejection.into_response()),
-                    };
+                    let $last = $last::from_request(Request::from_parts(parts, body), &state).await.map_err(Into::into)?;
 
                     Ok(self($($t,)* $last).await)
                 }

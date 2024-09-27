@@ -16,29 +16,34 @@ use tokio_tungstenite::{
     WebSocketStream,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WsRejection {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum WsError {
+    #[error("Method Not GET")]
     MethodNotGet,
+    #[error("Method Not CONNECT")]
     MethodNotConnect,
+    #[error("Missing Upgrade header")]
     MissingUpgrade,
+    #[error("Incorrect Upgrade header")]
     IncorrectUpgrade,
+    #[error("Incorrect WebSocket version")]
     IncorrectWebSocketVersion,
+    #[error("Invalid protocol psuedo-header")]
     InvalidProtocolPsuedoHeader,
+    #[error("Missing Sec-WebSocket-Key header")]
     MissingWebSocketKey,
 }
 
-impl IntoResponse for WsRejection {
+impl IntoResponse for WsError {
     fn into_response(self) -> Response {
         IntoResponse::into_response(match self {
-            WsRejection::MethodNotGet => ("Method Not GET", StatusCode::METHOD_NOT_ALLOWED),
-            WsRejection::MethodNotConnect => ("Method Not CONNECT", StatusCode::METHOD_NOT_ALLOWED),
-            WsRejection::MissingUpgrade => ("Missing Upgrade header", StatusCode::BAD_REQUEST),
-            WsRejection::IncorrectUpgrade => ("Incorrect Upgrade header", StatusCode::BAD_REQUEST),
-            WsRejection::IncorrectWebSocketVersion => ("Incorrect WebSocket version", StatusCode::BAD_REQUEST),
-            WsRejection::InvalidProtocolPsuedoHeader => {
-                ("Invalid protocol psuedo-header", StatusCode::BAD_REQUEST)
-            }
-            WsRejection::MissingWebSocketKey => ("Missing Sec-WebSocket-Key header", StatusCode::BAD_REQUEST),
+            WsError::MethodNotGet => ("Method Not GET", StatusCode::METHOD_NOT_ALLOWED),
+            WsError::MethodNotConnect => ("Method Not CONNECT", StatusCode::METHOD_NOT_ALLOWED),
+            WsError::MissingUpgrade => ("Missing Upgrade header", StatusCode::BAD_REQUEST),
+            WsError::IncorrectUpgrade => ("Incorrect Upgrade header", StatusCode::BAD_REQUEST),
+            WsError::IncorrectWebSocketVersion => ("Incorrect WebSocket version", StatusCode::BAD_REQUEST),
+            WsError::InvalidProtocolPsuedoHeader => ("Invalid protocol psuedo-header", StatusCode::BAD_REQUEST),
+            WsError::MissingWebSocketKey => ("Missing Sec-WebSocket-Key header", StatusCode::BAD_REQUEST),
         })
     }
 }
@@ -52,7 +57,7 @@ pub struct Ws {
 }
 
 impl<S> FromRequest<S> for Ws {
-    type Rejection = WsRejection;
+    type Rejection = WsError;
 
     fn from_request(
         mut req: Request,
@@ -63,30 +68,30 @@ impl<S> FromRequest<S> for Ws {
 
             let key = if req.version() <= Version::HTTP_11 {
                 if req.method() != Method::GET {
-                    return Err(WsRejection::MethodNotGet);
+                    return Err(WsError::MethodNotGet);
                 }
 
                 match headers.typed_get::<Connection>() {
                     Some(header) if header.contains("upgrade") => {}
-                    _ => return Err(WsRejection::MissingUpgrade),
+                    _ => return Err(WsError::MissingUpgrade),
                 }
 
                 match headers.typed_get::<Upgrade>() {
                     Some(upgrade) if upgrade == Upgrade::websocket() => {}
-                    _ => return Err(WsRejection::IncorrectUpgrade),
+                    _ => return Err(WsError::IncorrectUpgrade),
                 }
 
                 match headers.typed_get() {
                     Some(key) => Some(key),
-                    None => return Err(WsRejection::MissingWebSocketKey),
+                    None => return Err(WsError::MissingWebSocketKey),
                 }
             } else {
                 if req.method() != Method::CONNECT {
-                    return Err(WsRejection::MethodNotConnect);
+                    return Err(WsError::MethodNotConnect);
                 }
 
                 if req.extensions().get::<hyper::ext::Protocol>().map_or(true, |p| p.as_str() != "websocket") {
-                    return Err(WsRejection::InvalidProtocolPsuedoHeader);
+                    return Err(WsError::InvalidProtocolPsuedoHeader);
                 }
 
                 None
@@ -94,7 +99,7 @@ impl<S> FromRequest<S> for Ws {
 
             match headers.typed_get::<SecWebsocketVersion>() {
                 Some(SecWebsocketVersion::V13) => {}
-                _ => return Err(WsRejection::IncorrectWebSocketVersion),
+                _ => return Err(WsError::IncorrectWebSocketVersion),
             }
 
             let sec_websocket_protocol = req.headers().get(hyper::header::SEC_WEBSOCKET_PROTOCOL).cloned();

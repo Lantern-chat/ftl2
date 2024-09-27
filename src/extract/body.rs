@@ -1,15 +1,10 @@
 use std::{borrow::Cow, convert::Infallible, future::Future};
 
 use bytes::{Buf, Bytes, BytesMut};
-use http::StatusCode;
 use http_body_util::{BodyExt, BodyStream, Collected};
 use std::future::ready;
 
-use crate::{
-    body::{Body, BodyError},
-    response::IntoResponse,
-    FromRequest, Request, Response,
-};
+use crate::{body::Body, FromRequest, Request};
 
 impl<S> FromRequest<S> for BodyStream<Body> {
     type Rejection = Infallible;
@@ -27,32 +22,27 @@ impl<S> FromRequest<S> for BodyStream<Body> {
 pub type CollectedBytes = Collected<Bytes>;
 
 impl<S> FromRequest<S> for CollectedBytes {
-    type Rejection = BodyRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move { req.body_mut().take().collect().await.map_err(BodyRejectionError::from) }
+        async move { Ok(req.body_mut().take().collect().await?) }
     }
 }
 
 impl<S> FromRequest<S> for Bytes {
-    type Rejection = BodyRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            match req.body_mut().take().collect().await {
-                Ok(collected) => Ok(collected.to_bytes()),
-                Err(e) => Err(BodyRejectionError::from(e)),
-            }
-        }
+        async move { Ok(req.body_mut().take().collect().await?.to_bytes()) }
     }
 }
 
 impl<S> FromRequest<S> for BytesMut {
-    type Rejection = BodyRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
-            let collected = req.body_mut().take().collect().await.map_err(BodyRejectionError::from)?;
+            let collected = req.body_mut().take().collect().await?;
 
             let buf = collected.aggregate();
 
@@ -77,109 +67,25 @@ fn vec_from_collected(collected: Collected<Bytes>) -> Vec<u8> {
 }
 
 impl<S> FromRequest<S> for Vec<u8> {
-    type Rejection = BodyRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move { Ok(vec_from_collected(req.body_mut().take().collect().await?)) }
     }
 }
 
+impl Body {
+    /// Attempt to convert the body into a [`String`]
+    pub async fn to_string(&mut self) -> Result<String, crate::Error> {
+        Ok(String::from_utf8(vec_from_collected(self.take().collect().await?)).map_err(|e| e.utf8_error())?)
+    }
+}
+
 impl<S> FromRequest<S> for String {
-    type Rejection = StringRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        async move {
-            Ok(String::from_utf8(vec_from_collected(
-                req.body_mut().take().collect().await?,
-            ))?)
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum BodyRejectionError {
-    #[error("An error occurred while reading the body: {0}")]
-    BodyError(#[from] BodyError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum StringRejectionError {
-    #[error("An error occurred while reading the body: {0}")]
-    BodyError(#[from] BodyError),
-
-    #[error(transparent)]
-    FromUtf8Error(#[from] std::string::FromUtf8Error),
-}
-
-pub(crate) fn body_error_to_response(err: BodyError) -> Response {
-    IntoResponse::into_response(match err {
-        BodyError::Generic(e) => (
-            format!("An error occurred while reading the body: {e}").into(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        BodyError::Io(e) => (
-            format!("An error occurred while reading the body: {e}").into(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        BodyError::StreamAborted => (
-            Cow::Borrowed("The body stream was aborted"),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ),
-        BodyError::LengthLimitError(e) => (
-            format!("The body was too large: {e}").into(),
-            StatusCode::PAYLOAD_TOO_LARGE,
-        ),
-        BodyError::HyperError(err) => match err {
-            _ if err.is_parse_too_large() => {
-                (Cow::Borrowed("The body was too large"), StatusCode::PAYLOAD_TOO_LARGE)
-            }
-            _ if err.is_body_write_aborted()
-                || err.is_canceled()
-                || err.is_closed()
-                || err.is_incomplete_message() =>
-            {
-                (
-                    Cow::Borrowed("The request was aborted"),
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                )
-            }
-            _ if err.is_timeout() => (Cow::Borrowed("The request timed out"), StatusCode::GATEWAY_TIMEOUT),
-            _ if err.is_parse() || err.is_parse_status() => (
-                Cow::Borrowed("An error occurred while parsing the body"),
-                StatusCode::BAD_REQUEST,
-            ),
-            _ => (
-                Cow::Borrowed("An error occurred while reading the body"),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
-        },
-        BodyError::DeferredNotConverted => (
-            Cow::Borrowed("Deferred Body is not fully converted, make sure `Deferred` responses are used with `DeferredEncoding` layer"),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-        BodyError::ArbitraryBodyPolled => (
-            Cow::Borrowed("Arbitrary Body Polled, this is a bug"),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-    })
-}
-
-impl IntoResponse for BodyRejectionError {
-    fn into_response(self) -> Response {
-        match self {
-            BodyRejectionError::BodyError(err) => body_error_to_response(err),
-        }
-    }
-}
-
-impl IntoResponse for StringRejectionError {
-    fn into_response(self) -> Response {
-        match self {
-            StringRejectionError::BodyError(err) => body_error_to_response(err),
-            StringRejectionError::FromUtf8Error(_) => {
-                IntoResponse::into_response(("The body was not valid UTF-8", StatusCode::BAD_REQUEST))
-            }
-        }
+        async move { req.body_mut().to_string().await }
     }
 }
 
@@ -196,7 +102,7 @@ impl core::ops::Deref for LossyString {
 }
 
 impl<S> FromRequest<S> for LossyString {
-    type Rejection = BodyRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         async move {
@@ -207,27 +113,6 @@ impl<S> FromRequest<S> for LossyString {
                 Cow::Owned(s) => s,
             }))
         }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum LimitedRejectionError<B> {
-    #[error("The body was too large")]
-    TooLarge,
-
-    #[error(transparent)]
-    BodyError(#[from] B),
-}
-
-impl<B> IntoResponse for LimitedRejectionError<B>
-where
-    B: IntoResponse,
-{
-    fn into_response(self) -> Response {
-        IntoResponse::into_response(match self {
-            LimitedRejectionError::TooLarge => ("The body was too large", StatusCode::PAYLOAD_TOO_LARGE),
-            LimitedRejectionError::BodyError(err) => return err.into_response(),
-        })
     }
 }
 
@@ -242,7 +127,7 @@ where
     B: LimitedBody<N, Body = B> + FromRequest<S>,
     S: Send + Sync,
 {
-    type Rejection = LimitedRejectionError<B::Rejection>;
+    type Rejection = crate::Error;
 
     fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         use http_body::Body;
@@ -254,9 +139,9 @@ where
             let limit = N as u64;
 
             if req.body().size_hint().upper() > Some(limit) || req.body().size_hint().lower() > limit {
-                Err(LimitedRejectionError::TooLarge)
+                Err(crate::Error::PayloadTooLarge)
             } else {
-                Ok(Limited(B::from_request(req, state).await?))
+                Ok(Limited(B::from_request(req, state).await.map_err(Into::into)?))
             }
         }
     }

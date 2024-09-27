@@ -1,9 +1,9 @@
-use std::future::Future;
+use core::future::Future;
 
-use futures::FutureExt;
-use http::{HeaderValue, Method, StatusCode};
+use futures::TryFutureExt as _;
+use http::{HeaderValue, Method};
 
-use crate::{IntoResponse, Request, Response};
+use crate::{Error, Request};
 
 use super::FromRequest;
 
@@ -14,7 +14,7 @@ pub struct OneOf<T, P: ExtractOneOf<T>>(pub <P as ExtractOneOf<T>>::Storage);
 
 pub trait Extractable<T>: FromRequest<()> {
     fn matches_content_type(content_type: &HeaderValue) -> bool;
-    fn extract(req: Request) -> impl Future<Output = Result<T, Response>> + Send;
+    fn extract(req: Request) -> impl Future<Output = Result<T, Error>> + Send;
 }
 
 pub trait ExtractOneOf<T>: Send + 'static {
@@ -23,7 +23,7 @@ pub trait ExtractOneOf<T>: Send + 'static {
     fn extract(
         req: Request,
         content_type: HeaderValue,
-    ) -> impl Future<Output = Result<Self::Storage, Response>> + Send;
+    ) -> impl Future<Output = Result<Self::Storage, Error>> + Send;
 }
 
 macro_rules! impl_extract_any_tuple {
@@ -35,7 +35,7 @@ macro_rules! impl_extract_any_tuple {
         {
             type Storage = T;
 
-            fn extract(req: Request, content_type: HeaderValue) -> impl Future<Output = Result<Self::Storage, Response>> + Send {
+            fn extract(req: Request, content_type: HeaderValue) -> impl Future<Output = Result<Self::Storage, Error>> + Send {
                 async move {
                     $(
                         if $ty::matches_content_type(&content_type) {
@@ -43,7 +43,7 @@ macro_rules! impl_extract_any_tuple {
                         }
                     )*
 
-                    Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
+                    Err(Error::UnsupportedMediaType)
                 }
             }
         }
@@ -52,69 +52,32 @@ macro_rules! impl_extract_any_tuple {
 
 all_the_tuples_no_last_special_case!(impl_extract_any_tuple);
 
-#[derive(thiserror::Error)]
-pub enum OneOfRejectionError {
-    #[error("The request method is not allowed")]
-    MethodNotAllowed,
-
-    #[error("The request is missing required headers")]
-    MissingHeaders,
-
-    #[error("The request is missing a content type header")]
-    MissingContentType,
-
-    #[error("The request body is not valid")]
-    Response(Response),
-}
-
-use core::fmt;
-
-impl fmt::Debug for OneOfRejectionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-impl IntoResponse for OneOfRejectionError {
-    fn into_response(self) -> Response {
-        match self {
-            OneOfRejectionError::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED.into_response(),
-            OneOfRejectionError::MissingHeaders => StatusCode::UNPROCESSABLE_ENTITY.into_response(),
-            OneOfRejectionError::MissingContentType => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
-            OneOfRejectionError::Response(res) => res,
-        }
-    }
-}
-
 impl<S, T, P: ExtractOneOf<T>> FromRequest<S> for OneOf<T, P>
 where
     T: Send + 'static,
 {
-    type Rejection = OneOfRejectionError;
+    type Rejection = crate::Error;
 
     fn from_request(req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         // https://stackoverflow.com/a/16339271
         async move {
             if matches!(*req.method(), Method::TRACE) {
-                return Err(OneOfRejectionError::MethodNotAllowed);
+                return Err(Error::MethodNotAllowed);
             }
 
             if !(req.headers().contains_key(http::header::CONTENT_LENGTH)
                 || req.headers().contains_key(http::header::TRANSFER_ENCODING))
             {
-                return Err(OneOfRejectionError::MissingHeaders);
+                return Err(Error::MissingHeader("Content-Length or Transfer-Encoding"));
             }
 
             // HeaderValue is cheaper to clone than to lookup for each attempted type,
             // since it uses `Bytes` internally, which is reference-counted.
             let Some(content_type) = req.headers().get(http::header::CONTENT_TYPE).cloned() else {
-                return Err(OneOfRejectionError::MissingContentType);
+                return Err(Error::MissingHeader("Content-Type"));
             };
 
-            match P::extract(req, content_type).await {
-                Ok(value) => Ok(OneOf(value)),
-                Err(res) => Err(OneOfRejectionError::Response(res)),
-            }
+            Ok(OneOf(P::extract(req, content_type).await?))
         }
     }
 }
@@ -130,11 +93,8 @@ where
         content_type == "application/x-www-form-urlencoded"
     }
 
-    fn extract(req: Request) -> impl Future<Output = Result<T, Response>> + Send {
-        Form::<T>::from_request(req, &()).map(|res| match res {
-            Ok(form) => Ok(form.0),
-            Err(err) => Err(err.into_response()),
-        })
+    fn extract(req: Request) -> impl Future<Output = Result<T, Error>> + Send {
+        Form::<T>::from_request(req, &()).map_ok(|res| res.0)
     }
 }
 
@@ -151,11 +111,8 @@ where
         content_type == "application/json"
     }
 
-    fn extract(req: Request) -> impl Future<Output = Result<T, Response>> + Send {
-        Json::<T>::from_request(req, &()).map(|res| match res {
-            Ok(json) => Ok(json.0),
-            Err(err) => Err(err.into_response()),
-        })
+    fn extract(req: Request) -> impl Future<Output = Result<T, Error>> + Send {
+        Json::<T>::from_request(req, &()).map_ok(|res| res.0)
     }
 }
 
@@ -172,11 +129,8 @@ where
         content_type == "application/cbor"
     }
 
-    fn extract(req: Request) -> impl Future<Output = Result<T, Response>> + Send {
-        Cbor::<T>::from_request(req, &()).map(|res| match res {
-            Ok(cbor) => Ok(cbor.0),
-            Err(err) => Err(err.into_response()),
-        })
+    fn extract(req: Request) -> impl Future<Output = Result<T, Error>> + Send {
+        Cbor::<T>::from_request(req, &()).map_ok(|res| res.0)
     }
 }
 
@@ -185,7 +139,7 @@ impl<T> Extractable<T> for () {
         false
     }
 
-    fn extract(_: Request) -> impl Future<Output = Result<T, Response>> + Send {
+    fn extract(_: Request) -> impl Future<Output = Result<T, Error>> + Send {
         async move { unreachable!() }
     }
 }

@@ -1,4 +1,4 @@
-use crate::{form_impl, IntoResponse, RequestParts, Response};
+use crate::{form_impl, Error, RequestParts};
 
 use super::FromRequestParts;
 
@@ -15,29 +15,11 @@ impl<T> core::ops::Deref for Query<T> {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum FromQueryError {
-    #[error(transparent)]
-    De(#[from] form_impl::de::Error),
-
-    #[error("The query is missing")]
-    MissingQuery,
-}
-
-impl IntoResponse for FromQueryError {
-    fn into_response(self) -> Response {
-        match self {
-            FromQueryError::De(e) => (e.to_string(), http::StatusCode::BAD_REQUEST).into_response(),
-            FromQueryError::MissingQuery => http::StatusCode::BAD_REQUEST.into_response(),
-        }
-    }
-}
-
 impl<S, T> FromRequestParts<S> for Query<T>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
 {
-    type Rejection = FromQueryError;
+    type Rejection = Error;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -46,7 +28,7 @@ where
         core::future::ready(match parts.uri.query().map(form_impl::from_str) {
             Some(Ok(value)) => Ok(Query(value)),
             Some(Err(e)) => Err(e.into()),
-            None => Err(FromQueryError::MissingQuery),
+            None => Err(Error::MissingQuery),
         })
     }
 }

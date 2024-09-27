@@ -1,11 +1,9 @@
 #![allow(private_interfaces)]
 
 use core::str::FromStr;
-use std::{error::Error, future::Future, sync::Arc};
+use std::{error::Error as StdError, future::Future, sync::Arc};
 
-use http::StatusCode;
-
-use crate::{params::UrlParams, response::IntoResponse, RequestParts, Response};
+use crate::{params::UrlParams, RequestParts};
 
 use super::FromRequestParts;
 
@@ -17,12 +15,12 @@ pub trait PathSegments: Send + 'static {
     type Output: Send + 'static;
 
     #[doc(hidden)]
-    fn parse_segments(segments: &UrlParams) -> Result<Self::Output, PathRejection>;
+    fn parse_segments(segments: &UrlParams) -> Result<Self::Output, PathError>;
 }
 
 pub trait PathSegment: Send + 'static {
     const NAME: &'static str;
-    type Type: FromStr<Err: Error> + Send + 'static;
+    type Type: FromStr<Err: StdError> + Send + 'static;
 }
 
 impl<T> PathSegments for T
@@ -31,21 +29,21 @@ where
 {
     type Output = T::Type;
 
-    fn parse_segments(segments: &UrlParams) -> Result<Self::Output, PathRejection> {
+    fn parse_segments(segments: &UrlParams) -> Result<Self::Output, PathError> {
         let segment = match segments {
             UrlParams::InvalidUtf8InPathParam { key } => {
-                return Err(PathRejection::InvalidUtf8InPathParam { key: key.clone() });
+                return Err(PathError::InvalidUtf8InPathParam { key: key.clone() });
             }
             UrlParams::Params(params) => {
                 params.iter().find_map(|(k, v)| if k.as_ref() == T::NAME { Some(v) } else { None })
             }
         };
 
-        let segment = segment.ok_or(PathRejection::MissingSegment(T::NAME))?;
+        let segment = segment.ok_or(PathError::MissingSegment(T::NAME))?;
 
         match FromStr::from_str(&segment.0) {
             Ok(value) => Ok(value),
-            Err(e) => Err(PathRejection::InvalidSegment(e.to_string())),
+            Err(e) => Err(PathError::InvalidSegment(e.to_string())),
         }
     }
 }
@@ -69,7 +67,7 @@ macro_rules! decl_segments {
         impl<$($t: PathSegment,)*> PathSegments for ($($t,)*) {
             type Output = ($($t::Type,)*);
 
-            fn parse_segments(segments: &$crate::params::UrlParams) -> Result<Self::Output, PathRejection> {
+            fn parse_segments(segments: &$crate::params::UrlParams) -> Result<Self::Output, PathError> {
                 Ok(($($t::parse_segments(segments)?,)*))
             }
         }
@@ -81,13 +79,13 @@ all_the_tuples_no_last_special_case!(decl_segments);
 impl PathSegments for () {
     type Output = ();
 
-    fn parse_segments(_segments: &UrlParams) -> Result<Self::Output, PathRejection> {
+    fn parse_segments(_segments: &UrlParams) -> Result<Self::Output, PathError> {
         Ok(())
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum PathRejection {
+pub enum PathError {
     #[error("missing path parameters")]
     MissingParameters,
 
@@ -101,23 +99,17 @@ pub enum PathRejection {
     InvalidUtf8InPathParam { key: Arc<str> },
 }
 
-impl IntoResponse for PathRejection {
-    fn into_response(self) -> Response {
-        (self.to_string(), StatusCode::BAD_REQUEST).into_response()
-    }
-}
-
 impl<P, S> FromRequestParts<S> for Path<P>
 where
     P: PathSegments,
 {
-    type Rejection = PathRejection;
+    type Rejection = PathError;
 
     fn from_request_parts(
         parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        let params = parts.extensions.get::<UrlParams>().ok_or(PathRejection::MissingParameters);
+        let params = parts.extensions.get::<UrlParams>().ok_or(PathError::MissingParameters);
 
         async move { Ok(Path(P::parse_segments(params?)?)) }
     }

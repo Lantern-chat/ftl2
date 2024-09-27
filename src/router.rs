@@ -4,12 +4,16 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use futures::FutureExt as _;
-use http::{Method, StatusCode};
+use http::Method;
 
 use tower_layer::Layer;
 
-use crate::extract::MatchedPath;
-use crate::handler::{BoxedErasedHandler, Handler, HandlerIntoResponse};
+use crate::{
+    extract::MatchedPath,
+    handler::{BoxedErasedHandler, Handler, HandlerIntoResponse},
+    service::{Service, ServiceFuture},
+    IntoResponse, Request, Response,
+};
 
 type NodeId = u64;
 
@@ -423,7 +427,7 @@ where
     SERVICE: Service<Request, Response = RETURN, Error = Infallible> + 'static,
     RETURN: Send + 'static,
 {
-    pub fn finish<B>(self) -> impl Service<http::Request<B>, Response = RETURN, Error = StatusCode>
+    pub fn finish<B>(self) -> impl Service<http::Request<B>, Response = RETURN, Error = crate::Error>
     where
         B: http_body::Body<Data = bytes::Bytes, Error: std::error::Error + Send + Sync + 'static> + Send + 'static,
     {
@@ -462,12 +466,6 @@ where
     }
 }
 
-use crate::IntoResponse;
-use crate::{
-    service::{Service, ServiceFuture},
-    Request, Response,
-};
-
 impl<STATE, RETURN, SERVICE, B> Service<http::Request<B>> for Router<STATE, RETURN, SERVICE>
 where
     STATE: Clone + Send + Sync + 'static,
@@ -476,13 +474,13 @@ where
     B: Send,
 {
     type Response = RETURN;
-    type Error = StatusCode;
+    type Error = crate::Error;
 
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         async move {
             match self.call_opt(req).await {
                 Ok(Some(resp)) => Ok(resp),
-                Ok(None) => Err(StatusCode::NOT_FOUND),
+                Ok(None) => Err(crate::Error::NotFound),
             }
         }
     }

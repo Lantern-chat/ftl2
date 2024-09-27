@@ -1,11 +1,12 @@
 use std::{convert::Infallible, fmt, future::Future, marker::PhantomData};
 
 use crate::{
-    extract::FromRequestParts,
+    //extract::FromRequestParts,
     http::Request,
     response::{IntoResponse, Response},
     service::ServiceFuture,
-    Layer, Service,
+    Layer,
+    Service,
 };
 
 /// [`Layer`] that applies [`HandleError`] which is a [`Service`] adapter
@@ -127,61 +128,63 @@ where
     }
 }
 
-#[allow(unused_macros)]
-macro_rules! impl_service {
-    ( $($ty:ident),* $(,)? ) => {
-        impl<S, F, B, Res, Fut, $($ty,)*> Service<Request<B>>
-            for HandleError<S, F, ($($ty,)*)>
-        where
-            S: Service<Request<B>> + Clone,
-            S::Response: IntoResponse + Send,
-            S::Error: Send,
-            F: FnOnce($($ty),*, S::Error) -> Fut + Clone + Send + Sync,
-            Fut: Future<Output = Res> + Send,
-            Res: IntoResponse,
-            $( $ty: FromRequestParts<()>,)*
-            B: Send + 'static,
-        {
-            type Response = Response;
-            type Error = Infallible;
+// TODO: Revisit with new error handling
+//
+// #[allow(unused_macros)]
+// macro_rules! impl_service {
+//     ( $($ty:ident),* $(,)? ) => {
+//         impl<S, F, B, Res, Fut, $($ty,)*> Service<Request<B>>
+//             for HandleError<S, F, ($($ty,)*)>
+//         where
+//             S: Service<Request<B>> + Clone,
+//             S::Response: IntoResponse + Send,
+//             S::Error: Send,
+//             F: FnOnce($($ty),*, S::Error) -> Fut + Clone + Send + Sync,
+//             Fut: Future<Output = Res> + Send,
+//             Res: IntoResponse,
+//             $( $ty: FromRequestParts<()>,)*
+//             B: Send + 'static,
+//         {
+//             type Response = Response;
+//             type Error = Infallible;
 
-            #[allow(non_snake_case)]
-            fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-                async move {
-                    let (mut parts, body) = req.into_parts();
+//             #[allow(non_snake_case)]
+//             fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
+//                 async move {
+//                     let (mut parts, body) = req.into_parts();
 
-                    $(
-                        let $ty = match $ty::from_request_parts(&mut parts, &()).await {
-                            Ok(value) => value,
-                            Err(rejection) => return Ok(rejection.into_response()),
-                        };
-                    )*
+//                     $(
+//                         let $ty = match $ty::from_request_parts(&mut parts, &()).await {
+//                             Ok(value) => value,
+//                             Err(rejection) => return Ok(rejection.into_response()),
+//                         };
+//                     )*
 
-                    let req = Request::from_parts(parts, body);
+//                     let req = Request::from_parts(parts, body);
 
-                    match self.inner.call(req).await {
-                        Ok(res) => Ok(res.into_response()),
-                        Err(err) => Ok((self.f.clone())($($ty),*, err).await.into_response()),
-                    }
-                }
-            }
-        }
-    }
-}
+//                     match self.inner.call(req).await {
+//                         Ok(res) => Ok(res.into_response()),
+//                         Err(err) => Ok((self.f.clone())($($ty),*, err).await.into_response()),
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
-impl_service!(T1);
-impl_service!(T1, T2);
-impl_service!(T1, T2, T3);
-impl_service!(T1, T2, T3, T4);
-impl_service!(T1, T2, T3, T4, T5);
-impl_service!(T1, T2, T3, T4, T5, T6);
-impl_service!(T1, T2, T3, T4, T5, T6, T7);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
-impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);
+// impl_service!(T1);
+// impl_service!(T1, T2);
+// impl_service!(T1, T2, T3);
+// impl_service!(T1, T2, T3, T4);
+// impl_service!(T1, T2, T3, T4, T5);
+// impl_service!(T1, T2, T3, T4, T5, T6);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+// impl_service!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);

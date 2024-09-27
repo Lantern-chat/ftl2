@@ -3,10 +3,10 @@ use std::{convert::Infallible, ops::Deref, str::FromStr as _, sync::Arc};
 
 use http::{uri::Authority, Extensions, HeaderMap, HeaderName, Method, StatusCode, Uri, Version};
 
-use crate::{body::Body, IntoResponse, Request, RequestParts, Response};
+use crate::{body::Body, Error, IntoResponse, Request, RequestParts, Response};
 
 pub trait FromRequestParts<S>: Sized + Send + 'static {
-    type Rejection: IntoResponse + Send + 'static;
+    type Rejection: Into<Error> + Send + 'static;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -23,7 +23,7 @@ mod private {
 }
 
 pub trait FromRequest<S, Z = private::ViaRequest>: Sized + Send + 'static {
-    type Rejection: IntoResponse + Send + 'static;
+    type Rejection: Into<Error> + Send + 'static;
 
     fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
 }
@@ -99,7 +99,7 @@ macro_rules! impl_from_request {
             $last: FromRequestParts<S> + Send,
             S: Send + Sync,
         {
-            type Rejection = Response;
+            type Rejection = Error;
 
             fn from_request_parts(
                 parts: &mut RequestParts,
@@ -107,8 +107,8 @@ macro_rules! impl_from_request {
             ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
                 async move {
                     Ok((
-                        $($t::from_request_parts(parts, state).await.map_err(IntoResponse::into_response)?,)*
-                        $last::from_request_parts(parts, state).await.map_err(IntoResponse::into_response)?,
+                        $($t::from_request_parts(parts, state).await.map_err(Into::into)?,)*
+                        $last::from_request_parts(parts, state).await.map_err(Into::into)?,
                     ))
                 }
             }
@@ -120,7 +120,7 @@ macro_rules! impl_from_request {
             $last: FromRequest<S> + Send,
             S: Send + Sync,
         {
-            type Rejection = Response;
+            type Rejection = crate::Error;
 
             fn from_request(req: Request, state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
                 async move {
@@ -128,9 +128,8 @@ macro_rules! impl_from_request {
                     let (mut parts, body) = req.into_parts();
 
                     Ok((
-                        $($t::from_request_parts(&mut parts, state).await.map_err(IntoResponse::into_response)?,)*
-
-                        $last::from_request(Request::from_parts(parts, body), state).await.map_err(IntoResponse::into_response)?,
+                        $($t::from_request_parts(&mut parts, state).await.map_err(Into::into)?,)*
+                        $last::from_request(Request::from_parts(parts, body), state).await.map_err(Into::into)?,
                     ))
                 }
             }
@@ -180,20 +179,11 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MissingExtension;
-
-impl IntoResponse for MissingExtension {
-    fn into_response(self) -> Response {
-        ("Missing extension", StatusCode::INTERNAL_SERVER_ERROR).into_response()
-    }
-}
-
 impl<S, E> FromRequestParts<S> for Extension<E>
 where
     E: Clone + Send + Sync + 'static,
 {
-    type Rejection = MissingExtension;
+    type Rejection = Error;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -201,7 +191,7 @@ where
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
         core::future::ready(match parts.extensions.get::<E>() {
             Some(extension) => Ok(Extension(extension.clone())),
-            None => Err(MissingExtension),
+            None => Err(Error::MissingExtension),
         })
     }
 }
@@ -305,33 +295,32 @@ impl<S> FromRequestParts<S> for Uri {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum AuthorityRejection {
+pub enum AuthorityError {
     #[error("missing authority")]
     MissingAuthority,
     #[error("invalid authority")]
     InvalidAuthority,
 }
 
-impl IntoResponse for AuthorityRejection {
+impl IntoResponse for AuthorityError {
     fn into_response(self) -> Response {
         IntoResponse::into_response(match self {
-            AuthorityRejection::MissingAuthority => ("missing authority", StatusCode::BAD_REQUEST),
-            AuthorityRejection::InvalidAuthority => ("invalid authority", StatusCode::BAD_REQUEST),
+            AuthorityError::MissingAuthority => ("missing authority", StatusCode::BAD_REQUEST),
+            AuthorityError::InvalidAuthority => ("invalid authority", StatusCode::BAD_REQUEST),
         })
     }
 }
 
-pub(crate) fn extract_authority(parts: &RequestParts) -> Result<Authority, AuthorityRejection> {
+pub(crate) fn extract_authority(parts: &RequestParts) -> Result<Authority, AuthorityError> {
     let from_uri = parts.uri.authority();
 
-    let from_header = parts
-        .headers
-        .get(HeaderName::from_static("host"))
-        .ok_or(AuthorityRejection::MissingAuthority)
-        .and_then(|hdr| {
-            Authority::from_str(hdr.to_str().map_err(|_| AuthorityRejection::InvalidAuthority)?)
-                .map_err(|_| AuthorityRejection::InvalidAuthority)
-        });
+    let from_header =
+        parts.headers.get(HeaderName::from_static("host")).ok_or(AuthorityError::MissingAuthority).and_then(
+            |hdr| {
+                Authority::from_str(hdr.to_str().map_err(|_| AuthorityError::InvalidAuthority)?)
+                    .map_err(|_| AuthorityError::InvalidAuthority)
+            },
+        );
 
     match (from_uri, from_header) {
         (Some(_), Ok(b)) => Ok(b),          // defer to HOST as what the client intended
@@ -342,7 +331,7 @@ pub(crate) fn extract_authority(parts: &RequestParts) -> Result<Authority, Autho
 }
 
 impl<S> FromRequestParts<S> for Authority {
-    type Rejection = AuthorityRejection;
+    type Rejection = AuthorityError;
 
     fn from_request_parts(
         parts: &mut RequestParts,
@@ -397,31 +386,13 @@ impl Deref for MatchedPath {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum MatchedPathRejection {
-    #[error("missing matched path")]
-    MatchedPathMissing,
-}
-
-impl IntoResponse for MatchedPathRejection {
-    fn into_response(self) -> Response {
-        IntoResponse::into_response(match self {
-            MatchedPathRejection::MatchedPathMissing => {
-                ("missing matched path", StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        })
-    }
-}
-
 impl<S> FromRequestParts<S> for MatchedPath {
-    type Rejection = MatchedPathRejection;
+    type Rejection = Error;
 
     fn from_request_parts(
         parts: &mut RequestParts,
         _state: &S,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        futures::future::ready(
-            parts.extensions.get::<Self>().cloned().ok_or(MatchedPathRejection::MatchedPathMissing),
-        )
+        futures::future::ready(parts.extensions.get::<Self>().cloned().ok_or(Error::MissingMatchedPath))
     }
 }
