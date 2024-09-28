@@ -134,18 +134,18 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
                 self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now).await;
             }
 
-            return match self.limits.entry_async(key).await {
+            let entry = match self.limits.entry_async(key).await {
                 Entry::Occupied(gcra) => {
                     gcra.get().req(quota, now)?;
-                    peek(gcra.key());
-                    Ok(())
+                    gcra
                 }
-                Entry::Vacant(gcra) => {
-                    let gcra = gcra.insert_entry(Gcra::first(quota, now));
-                    peek(gcra.key());
-                    Ok(())
-                }
+                Entry::Vacant(gcra) => gcra.insert_entry(Gcra::first(quota, now)),
             };
+
+            // NOTE: By using the returned entry from either branch, we potentially avoid duplicate codegen for peek
+            peek(entry.key());
+
+            return Ok(());
         };
 
         res
