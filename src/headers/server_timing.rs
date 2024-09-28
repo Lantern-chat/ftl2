@@ -139,7 +139,7 @@ impl Header for ServerTimings {
                 let duration = duration.as_micros();
                 let (milliseconds, microseconds) = (duration / 1_000, duration % 1_000);
 
-                write!(value, ";dur={milliseconds}.{microseconds}").unwrap();
+                write!(value, ";dur={milliseconds}.{microseconds:03}").unwrap();
             }
         }
 
@@ -194,8 +194,10 @@ fn parse_duration(value: &str) -> Option<Duration> {
     Some(match value.split_once('.') {
         None => Duration::from_millis(value.parse().ok()?),
         Some((millis, micros)) => {
+            let max_len = micros.len().min(3);
+
             let milliseconds = millis.parse::<u64>().ok()?;
-            let microseconds = micros.parse::<u64>().ok()?;
+            let microseconds = micros[..max_len].parse::<u64>().ok()?;
 
             Duration::from_micros(milliseconds * 1_000 + microseconds)
         }
@@ -218,7 +220,7 @@ mod test {
                     .with_duration(Duration::from_millis(23200)),
             )
             .push(ServerTiming::new("db").with_duration(Duration::from_millis(53000)))
-            .push(ServerTiming::new("app").with_duration(Duration::from_millis(47200)));
+            .push(ServerTiming::new("app").with_duration(Duration::from_millis(47005)));
 
         let mut values = Vec::new();
         timings.encode(&mut values);
@@ -259,7 +261,7 @@ mod test {
             Some(&ServerTiming {
                 name: Cow::Borrowed("app"),
                 description: None,
-                duration: Some(Duration::from_millis(47200))
+                duration: Some(Duration::from_millis(47005))
             })
         );
 
