@@ -27,6 +27,7 @@ where
     type Response = Response;
     type Error = Infallible;
 
+    #[inline]
     fn call(&self, mut req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         // This is sometimes used in old browsers without support for PATCH or OPTIONS methods.
         if let Some(method_override) =

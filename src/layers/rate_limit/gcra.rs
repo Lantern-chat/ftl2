@@ -303,6 +303,13 @@ impl Default for Quota {
     }
 }
 
+impl From<Duration> for Quota {
+    /// Constructs a new quota with the given emission interval, but with a burst size of 1.
+    fn from(emission_interval: Duration) -> Quota {
+        Quota::simple(emission_interval)
+    }
+}
+
 impl Quota {
     /// Constructs a new quota with the given number of burst requests and
     /// an `emission_interval` parameter, which is the amount of time it takes

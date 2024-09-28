@@ -118,6 +118,7 @@ where
     type Response = Response;
     type Error = Infallible;
 
+    #[inline]
     fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         async move {
             match self.inner.call(req).await {

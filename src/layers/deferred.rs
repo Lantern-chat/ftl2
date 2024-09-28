@@ -94,6 +94,7 @@ where
     type Error = S::Error;
     type Response = Response;
 
+    #[inline]
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         let mut encoding = self.default_encoding;
 

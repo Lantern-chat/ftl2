@@ -365,21 +365,22 @@ impl Body {
     {
         use core::mem::ManuallyDrop;
 
+        // when transmuting the body, we need to ensure the old value is not dropped
         let body = ManuallyDrop::new(body);
         let ptr = &body as *const ManuallyDrop<B>;
 
         match TypeId::of::<B>() {
             id if id == TypeId::of::<hyper::body::Incoming>() => {
                 // SAFETY: we know the type is hyper::body::Incoming
-                Body::from(unsafe { std::ptr::read::<hyper::body::Incoming>(ptr.cast()) })
+                Body::from(unsafe { ptr.cast::<hyper::body::Incoming>().read() })
             }
             id if id == TypeId::of::<Body>() => {
                 // SAFETY: we know the type is Body
-                unsafe { std::ptr::read::<Body>(ptr.cast()) }
+                unsafe { ptr.cast::<Body>().read() }
             }
             id if id == TypeId::of::<Full<Bytes>>() => {
                 // SAFETY: we know the type is Full<Bytes>
-                Body(BodyInner::Full(unsafe { std::ptr::read(ptr.cast()) }))
+                Body(BodyInner::Full(unsafe { ptr.cast::<Full<Bytes>>().read() }))
             }
             _ => {
                 use http_body_util::BodyExt;

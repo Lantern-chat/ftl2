@@ -20,6 +20,7 @@ where
     type Error = S::Error;
     type Response = S::Response;
 
+    #[inline]
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         let (parts, body) = req.into_parts();
 
