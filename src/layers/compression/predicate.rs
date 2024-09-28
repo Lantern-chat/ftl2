@@ -72,7 +72,6 @@ use std::sync::LazyLock;
 static INCOMPRESSIBLE_MIMES: LazyLock<AhoCorasick> = LazyLock::new(|| {
     #[rustfmt::skip]
     let built_in_patterns = [
-        "image/", "video/", "audio/", // media types
         "application/ogg",   // OGG/OGX media format
         "application/grpc",  // gRPC
         "text/event-stream", // Server-Sent Events
@@ -113,10 +112,35 @@ impl Predicate for DefaultPredicate {
         };
 
         should_compress = should_compress && {
-            let ty = content_type(parts);
+            #[inline(always)]
+            fn is_compressible(ty: &str) -> bool {
+                // there are few enough entries here that brute-force is cache-friendly and fast
+                const ALWAYS_ALLOW: &[&str] = &[
+                    "application/json",
+                    "application/cbor",
+                    "application/javascript",
+                    "text/html",
+                    "text/css",
+                    "text/javascript",
+                    "text/plain",
+                    "image/svg+xml",
+                ];
 
-            !INCOMPRESSIBLE_MIMES.is_match(Input::new(ty).anchored(Anchored::Yes))
-                || ty.starts_with("image/svg+xml")
+                // fast path for common types
+                if ALWAYS_ALLOW.contains(&ty) {
+                    return true;
+                }
+
+                // fast path for commonly used incrompressible types
+                if ty.starts_with("image/") || ty.starts_with("video/") || ty.starts_with("audio/") {
+                    return false;
+                }
+
+                // search for incompressible MIME types last to avoid unnecessary work
+                !INCOMPRESSIBLE_MIMES.is_match(Input::new(ty).anchored(Anchored::Yes))
+            }
+
+            is_compressible(content_type(parts))
         };
 
         should_compress
