@@ -123,7 +123,8 @@ impl Predicate for DefaultPredicate {
                     "text/css",
                     "text/javascript",
                     "text/plain",
-                    "image/svg+xml",
+                    "image/svg+xml", // SVGs are a special case
+                    "",              // assume empty/unspecified types are compressible
                 ];
 
                 // fast path for common types
