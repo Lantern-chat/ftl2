@@ -4,7 +4,6 @@ pub use crate::extract::real_ip::RealIpLayer;
 
 pub mod convert_body;
 pub mod handle_error;
-pub mod method_override;
 pub mod normalize;
 pub mod resp_timing;
 
