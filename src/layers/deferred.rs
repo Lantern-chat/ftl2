@@ -96,30 +96,9 @@ where
 
     #[inline]
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        let mut encoding = self.default_encoding;
-
-        if let Some(query) = req.uri().query() {
-            // because neither the key or value we care about are urlencoded, we can just do simple splits
-            for pair in query.split('&') {
-                if let Some((key, value)) = pair.split_once('=') {
-                    if !self.fields.contains(&key) {
-                        continue;
-                    }
-
-                    encoding = match value {
-                        #[cfg(feature = "json")]
-                        "json" => Encoding::Json,
-
-                        #[cfg(feature = "cbor")]
-                        "cbor" => Encoding::Cbor,
-
-                        _ => continue,
-                    };
-
-                    break;
-                }
-            }
-        }
+        // `PathAndQuery` is cheap to clone, so do that to avoid parsing until later,
+        // since not all requests will need it.
+        let path = req.uri().path_and_query().cloned();
 
         self.service.call(req).map_ok(move |res: Response| {
             use crate::body::{Body, BodyInner};
@@ -128,6 +107,31 @@ where
 
             match body.0 {
                 BodyInner::Deferred(deferred) => {
+                    let mut encoding = self.default_encoding;
+
+                    if let Some(query) = path.as_ref().and_then(|path| path.query()) {
+                        // because neither the key or value we care about are urlencoded, we can just do simple splits
+                        for pair in query.split('&') {
+                            if let Some((key, value)) = pair.split_once('=') {
+                                if !self.fields.contains(&key) {
+                                    continue;
+                                }
+
+                                encoding = match value {
+                                    #[cfg(feature = "json")]
+                                    "json" => Encoding::Json,
+
+                                    #[cfg(feature = "cbor")]
+                                    "cbor" => Encoding::Cbor,
+
+                                    _ => continue,
+                                };
+
+                                break;
+                            }
+                        }
+                    }
+
                     let (new_parts, body) = deferred.0.into_response(encoding).into_parts();
 
                     if !new_parts.status.is_success() {
