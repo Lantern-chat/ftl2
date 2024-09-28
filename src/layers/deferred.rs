@@ -1,6 +1,6 @@
 use futures::TryFutureExt;
 
-use crate::{body::deferred::DeferredInner, service::ServiceFuture, Layer, Response, Service};
+use crate::{service::ServiceFuture, Layer, Response, Service};
 
 /// The encoding to use for serialization of deferred values.
 ///
@@ -128,24 +128,7 @@ where
 
             match body.0 {
                 BodyInner::Deferred(deferred) => {
-                    let resp = match deferred.0 {
-                        DeferredInner::Array(mut stream) => match encoding {
-                            #[cfg(feature = "json")]
-                            Encoding::Json => stream.as_json(),
-
-                            #[cfg(feature = "cbor")]
-                            Encoding::Cbor => stream.as_cbor(),
-                        },
-                        DeferredInner::Single(value) => match encoding {
-                            #[cfg(feature = "json")]
-                            Encoding::Json => value.as_json(),
-
-                            #[cfg(feature = "cbor")]
-                            Encoding::Cbor => value.as_cbor(),
-                        },
-                    };
-
-                    let (new_parts, body) = resp.into_parts();
+                    let (new_parts, body) = deferred.0.into_response(encoding).into_parts();
 
                     if !new_parts.status.is_success() {
                         parts = new_parts;

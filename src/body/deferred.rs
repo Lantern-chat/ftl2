@@ -1,10 +1,33 @@
-use crate::{IntoResponse, Response};
 use futures::stream::StreamExt;
 
+use crate::{IntoResponse, Response};
+
 pub(crate) enum DeferredInner {
-    Single(Box<dyn IndirectSerialize + Send + 'static>),
-    Array(Box<dyn IndirectStream + Send + 'static>),
-    //Map(T),
+    Single(Box<dyn IndirectSerialize>),
+    Array(Box<dyn IndirectStream>),
+}
+
+use crate::layers::deferred::Encoding;
+
+impl DeferredInner {
+    pub fn into_response(self, encoding: Encoding) -> Response {
+        match self {
+            DeferredInner::Array(mut stream) => match encoding {
+                #[cfg(feature = "json")]
+                Encoding::Json => stream.as_json(),
+
+                #[cfg(feature = "cbor")]
+                Encoding::Cbor => stream.as_cbor(),
+            },
+            DeferredInner::Single(value) => match encoding {
+                #[cfg(feature = "json")]
+                Encoding::Json => value.as_json(),
+
+                #[cfg(feature = "cbor")]
+                Encoding::Cbor => value.as_cbor(),
+            },
+        }
+    }
 }
 
 /// Defers the encoding of a value, using an encoding parameter given in the request.
