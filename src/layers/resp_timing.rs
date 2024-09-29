@@ -23,16 +23,23 @@ impl<S> Layer<S> for RespTimingLayer {
     }
 }
 
-impl<Req, ResBody, S> Service<Req> for RespTimingLayer<S>
+/// Request Extension to store the start time of the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct StartTime(pub Instant);
+
+impl<ReqBody, ResBody, S> Service<http::Request<ReqBody>> for RespTimingLayer<S>
 where
-    S: Service<Req, Response = http::Response<ResBody>>,
+    S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>>,
 {
     type Response = S::Response;
     type Error = S::Error;
 
     #[inline]
-    fn call(&self, req: Req) -> impl ServiceFuture<Self::Response, Self::Error> {
+    fn call(&self, mut req: http::Request<ReqBody>) -> impl ServiceFuture<Self::Response, Self::Error> {
         let start = Instant::now();
+
+        req.extensions_mut().insert(StartTime(start));
 
         self.0.call(req).map_ok(move |mut resp| {
             let timing = ServerTiming::new("resp").elapsed_from(start);

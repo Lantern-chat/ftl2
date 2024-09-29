@@ -504,8 +504,13 @@ where
     type Error = Error<I::Error, K::Rejection>;
 
     fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
+        use crate::layers::resp_timing::StartTime;
+
         // try to get the current time as close as possible to the request
-        let now = Instant::now();
+        let now = match req.extensions().get::<StartTime>() {
+            Some(StartTime(start)) => *start,
+            None => Instant::now(),
+        };
 
         let path = match req.extensions().get::<FtlMatchedPath>() {
             Some(path) => MatchedPath::Matched(path.clone()),
