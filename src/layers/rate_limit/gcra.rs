@@ -322,7 +322,7 @@ impl Quota {
     #[rustfmt::skip] #[must_use]
     pub const fn new(emission_interval: Duration, burst: NonZeroU64) -> Quota {
         let t = emission_interval.as_nanos() as u64;
-        Quota { t, tau: t * burst.get() }
+        Quota { t, tau: t.saturating_mul(burst.get()) }
     }
 
     /// Constructs a new quota with the given emission interval, but with a burst size of 1.
@@ -349,7 +349,7 @@ impl Gcra {
     #[must_use]
     pub const fn first(Quota { t, .. }: Quota, now: u64) -> Gcra {
         // Equivalent to `Gcra(now + t).req()` to calculate the first request
-        Gcra(AtomicU64::new(now + t + t))
+        Gcra(AtomicU64::new(now.saturating_add(t).saturating_add(t)))
     }
 
     /// Core GCRA logic. Returns the next time a request can be made, either as an error or a success.
@@ -361,7 +361,7 @@ impl Gcra {
             // SAFETY: next > now, so next - now is non-zero by definition
             Err(RateLimitError(unsafe { NonZeroU64::new_unchecked(next - now) }))
         } else {
-            Ok(now.max(prev) + t)
+            Ok(now.max(prev).saturating_add(t))
         }
     }
 
