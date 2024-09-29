@@ -5,11 +5,13 @@ use headers::{ContentType, Header as HeaderType, HeaderMapExt};
 use crate::{extract::FromRequestParts, response::IntoResponseParts, Error, RequestParts, ResponseParts};
 
 pub mod accept_encoding;
+pub mod entity_tag;
 pub mod server_timing;
 
 pub static APPLICATION_CBOR: LazyLock<ContentType> =
     LazyLock::new(|| ContentType::from("application/cbor".parse::<mime::Mime>().unwrap()));
 
+/// A typed header, which can be extracted from a request and inserted into a response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Header<H: HeaderType>(pub H);

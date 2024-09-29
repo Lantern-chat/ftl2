@@ -12,6 +12,7 @@ use http::{header::TRAILER, HeaderName, HeaderValue, Method, StatusCode};
 use percent_encoding::percent_decode_str;
 
 use crate::headers::accept_encoding::{AcceptEncoding, ContentEncoding};
+use crate::headers::entity_tag::{EntityTag, IfNoneMatch};
 use headers::{
     AcceptRanges, ContentLength, ContentRange, HeaderMapExt, IfModifiedSince, IfRange, IfUnmodifiedSince,
     LastModified, Range,
@@ -174,6 +175,10 @@ pub struct Conditionals {
     if_modified_since: Option<IfModifiedSince>,
     if_unmodified_since: Option<IfUnmodifiedSince>,
     if_range: Option<IfRange>,
+    // NOTE: Only use if-none-match due to its weak comparison semantics,
+    // whereas if-match always requires a strong match and would thus
+    // always fail for files.
+    if_none_match: Option<IfNoneMatch>,
     range: Option<Range>,
 }
 
@@ -189,10 +194,21 @@ impl Conditionals {
             if_modified_since: parts.headers.typed_get(),
             if_unmodified_since: parts.headers.typed_get(),
             if_range: parts.headers.typed_get(),
+            if_none_match: parts.headers.typed_get(),
         }
     }
 
-    pub fn check(self, last_modified: Option<LastModified>) -> Cond {
+    pub fn check(self, last_modified: Option<LastModified>, etag: &EntityTag) -> Cond {
+        if let Some(if_none_match) = self.if_none_match {
+            log::trace!("if-none-match? {if_none_match:?} vs {etag:?}",);
+
+            // "When the condition fails for GET and HEAD methods,
+            //  then the server must return HTTP status code 304 (Not Modified)"
+            if if_none_match.iter().any(|e| e.weak_eq(etag)) {
+                return Cond::NoBody(StatusCode::NOT_MODIFIED);
+            }
+        }
+
         if let Some(since) = self.if_unmodified_since {
             let precondition = last_modified.map(|time| since.precondition_passes(time.into())).unwrap_or(false);
 
@@ -281,7 +297,7 @@ pub async fn file<S: Send + Sync>(
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
 
-    file_reply(parts, state, request_path, cache).await
+    file_reply(parts, state, request_path, cache, None).await
 }
 
 pub async fn dir<S: Send + Sync>(
@@ -300,31 +316,38 @@ pub async fn dir<S: Send + Sync>(
         Err(e) => return e.to_string().with_status(StatusCode::BAD_REQUEST).into_response(),
     };
 
-    let is_dir = cache.metadata(&buf, state).await.map(|m| m.is_dir()).unwrap_or(false);
+    let metadata = match cache.metadata(&buf, state).await {
+        Ok(meta) => {
+            if meta.is_dir() {
+                log::debug!("dir: appending index.html to directory path");
+                buf.push("index.html");
+                None // not applicable
+            } else {
+                Some(meta)
+            }
+        }
+        _ => None, // TODO: Should this be an error?
+    };
 
-    if is_dir {
-        log::debug!("dir: appending index.html to directory path");
-        buf.push("index.html");
-    }
-
-    file_reply(parts, state, buf, cache).await
+    file_reply(parts, state, buf, cache, metadata).await
 }
 
-async fn file_reply<S: Send + Sync>(
-    parts: &RequestParts,
+async fn file_reply<S: Send + Sync, F: FileCache<S>>(
+    req: &RequestParts,
     state: &S,
     path: impl AsRef<Path>,
-    cache: impl FileCache<S>,
+    cache: F,
+    metadata: Option<F::Meta>,
 ) -> Response {
     let req_start = Instant::now();
 
     let path = path.as_ref();
 
-    let range = parts.headers.typed_get::<headers::Range>();
+    let range = req.headers.typed_get::<headers::Range>();
 
     // if a range is given, do not use pre-compression
     let accepts = match range {
-        None => parts.headers.typed_get::<AcceptEncoding>(),
+        None => req.headers.typed_get::<AcceptEncoding>(),
         Some(_) => None,
     };
 
@@ -339,26 +362,32 @@ async fn file_reply<S: Send + Sync>(
         }
     };
 
-    let metadata = match cache.file_metadata(&file, state).await {
-        Ok(m) => m,
-        Err(e) => {
-            log::error!("Error retreiving file metadata: {e}");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+    let metadata = match metadata {
+        Some(metadata) => metadata,
+        None => match cache.file_metadata(&file, state).await {
+            Ok(m) => m,
+            Err(e) => {
+                log::error!("Error retreiving file metadata: {e}");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        },
     };
 
     // parse after opening the file handle to save time on open error
-    let conditionals = Conditionals::new(parts, range);
+    let conditionals = Conditionals::new(req, range);
 
-    let modified = match metadata.modified() {
-        Err(_) => None,
-        Ok(t) => Some(LastModified::from(t)),
-    };
+    let modified = metadata.modified().ok();
+    let last_modified = modified.map(LastModified::from);
 
     let mut len = metadata.len();
 
-    match conditionals.check(modified) {
-        Cond::NoBody(resp) => resp.into_response(),
+    let etag = EntityTag::from_file(
+        modified.and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()),
+        len,
+    );
+
+    match conditionals.check(last_modified, &etag) {
+        Cond::NoBody(resp) => resp.with_header(etag).into_response(),
         Cond::WithBody(range) => match bytes_range(range, len) {
             Err(_) => {
                 StatusCode::RANGE_NOT_SATISFIABLE.with_header(ContentRange::unsatisfied_bytes(len)).into_response()
@@ -369,24 +398,28 @@ async fn file_reply<S: Send + Sync>(
                 let buf_size = metadata.blksize().max(DEFAULT_READ_BUF_SIZE).min(len) as usize;
                 let encoding = file.encoding();
 
-                let mut resp = Response::default();
+                let mut body = Body::empty();
+                let mut parts = http::response::Response::new(()).into_parts().0; // this is stupid, only way to create Parts
+
+                parts.headers.reserve(7); // might overallocate a bit, but that's better than multiple reallocations
+
+                parts.headers.typed_insert(etag);
 
                 let is_partial = sub_len != len;
 
                 if is_partial {
                     assert_eq!(encoding, ContentEncoding::Identity);
 
-                    *resp.status_mut() = StatusCode::PARTIAL_CONTENT;
-                    resp.headers_mut()
-                        .typed_insert(ContentRange::bytes(start..end, len).expect("valid ContentRange"));
+                    parts.status = StatusCode::PARTIAL_CONTENT;
+                    parts.headers.typed_insert(ContentRange::bytes(start..end, len).expect("valid ContentRange"));
 
                     len = sub_len;
                 }
 
-                if parts.method == Method::GET {
+                if req.method == Method::GET {
                     if !is_partial {
                         if let Some(full) = file.full() {
-                            *resp.body_mut() = full.into();
+                            body = full.into();
                         }
                     } else if start != 0 {
                         if let Err(e) = file.seek(SeekFrom::Start(start)).await {
@@ -394,28 +427,26 @@ async fn file_reply<S: Send + Sync>(
                         }
                     }
 
-                    // only create a body if there isn't one already, like from full files
-                    if resp.body().is_empty() {
-                        *resp.body_mut() = Body::wrap(crate::body::async_read::AsyncReadBody::new(
+                    // only create a body if there isn't one already, like from Full files
+                    if body.is_empty() {
+                        body = Body::wrap(crate::body::async_read::AsyncReadBody::new(
                             file, buf_size, req_start, len,
                         ));
 
-                        resp.headers_mut().insert(TRAILER, const { HeaderValue::from_static("server-timing") });
+                        parts.headers.insert(TRAILER, const { HeaderValue::from_static("server-timing") });
                     }
                 };
 
-                let headers = resp.headers_mut();
-
-                if let Some(last_modified) = modified {
-                    headers.typed_insert(last_modified);
+                if let Some(last_modified) = last_modified {
+                    parts.headers.typed_insert(last_modified);
                 }
 
                 if encoding != ContentEncoding::Identity {
-                    headers.typed_insert(encoding);
+                    parts.headers.typed_insert(encoding);
                 }
 
-                headers.typed_insert(ContentLength(len));
-                headers.typed_insert(AcceptRanges::bytes());
+                parts.headers.typed_insert(ContentLength(len));
+                parts.headers.typed_insert(AcceptRanges::bytes());
 
                 let mime = path
                     .extension()
@@ -423,12 +454,12 @@ async fn file_reply<S: Send + Sync>(
                     .and_then(|ext| mime_db::lookup_ext(ext)?.types.first().copied())
                     .unwrap_or("application/octet-stream");
 
-                headers.append(
+                parts.headers.append(
                     const { HeaderName::from_static("content-type") },
                     HeaderValue::from_static(mime),
                 );
 
-                resp
+                http::Response::from_parts(parts, body)
             }
         },
     }
