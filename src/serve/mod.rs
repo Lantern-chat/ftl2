@@ -313,8 +313,13 @@ impl<A> Server<A> {
             let watcher = handle.watcher();
 
             tokio::spawn(async move {
-                let Ok((stream, service)) = acceptor.accept(stream, service).await else {
-                    return;
+                let (stream, service) = tokio::select! {
+                    biased;
+                    res = acceptor.accept(stream, service) => match res {
+                        Ok(value) => value,
+                        Err(_) => return,
+                    },
+                    _ = watcher.0.shutdown_notified() => return,
                 };
 
                 let mut conn = std::pin::pin!(builder.serve_connection_with_upgrades(
