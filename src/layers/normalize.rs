@@ -30,10 +30,8 @@ where
     #[inline]
     fn call(&self, mut req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         // This is sometimes used in old browsers without support for PATCH or OPTIONS methods.
-        if let Some(method_override) =
-            req.headers().get(const { HeaderName::from_static("x-http-method-override") })
-        {
-            if let Ok(method_override) = Method::from_bytes(method_override.as_bytes()) {
+        if let Some(method) = req.headers().get(const { HeaderName::from_static("x-http-method-override") }) {
+            if let Ok(method_override) = Method::from_bytes(method.as_bytes()) {
                 *req.method_mut() = method_override;
             }
         }
@@ -70,8 +68,8 @@ where
 
             // http://www.gnuterrypratchett.com/
             resp.headers_mut().insert(
-                http::HeaderName::from_static("x-clacks-overhead"),
-                http::HeaderValue::from_static("GNU Terry Pratchett"),
+                const { http::HeaderName::from_static("x-clacks-overhead") },
+                const { http::HeaderValue::from_static("GNU Terry Pratchett") },
             );
 
             Ok(resp)

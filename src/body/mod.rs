@@ -173,6 +173,7 @@ impl HttpBody for BodyInner {
     type Data = Bytes;
     type Error = BodyError;
 
+    #[inline]
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -191,6 +192,7 @@ impl HttpBody for BodyInner {
         }
     }
 
+    #[inline]
     fn is_end_stream(&self) -> bool {
         match self {
             Self::Empty => true,
@@ -204,6 +206,7 @@ impl HttpBody for BodyInner {
         }
     }
 
+    #[inline]
     fn size_hint(&self) -> hyper::body::SizeHint {
         match self {
             Self::Empty => hyper::body::SizeHint::new(),
@@ -359,6 +362,7 @@ impl BodySender {
 }
 
 impl Body {
+    #[inline]
     pub(crate) fn from_any_body<B>(body: B) -> Self
     where
         B: http_body::Body<Data = Bytes, Error: Error + Send + Sync + 'static> + Send + 'static,

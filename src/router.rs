@@ -476,6 +476,7 @@ where
     type Response = RETURN;
     type Error = crate::Error;
 
+    #[inline]
     fn call(&self, req: http::Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
         async move {
             match self.call_opt(req).await {
@@ -494,6 +495,7 @@ where
     type Response = RETURN;
     type Error = Infallible;
 
+    #[inline]
     fn call(&self, req: Request) -> impl ServiceFuture<Self::Response, Self::Error> {
         self.handler.call(req, self.state.clone()).map(Ok)
     }

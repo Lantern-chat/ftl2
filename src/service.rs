@@ -34,6 +34,7 @@ where
     type Response = <<T as Deref>::Target as Service<R>>::Response;
     type Error = <<T as Deref>::Target as Service<R>>::Error;
 
+    #[inline]
     fn call(&self, req: R) -> impl ServiceFuture<Self::Response, Self::Error> {
         (**self).call(req)
     }
@@ -54,6 +55,7 @@ where
 {
     type Service = S;
 
+    #[inline]
     fn make_service(&self, target: Target) -> Self::Service {
         (self.0)(target)
     }
@@ -72,6 +74,7 @@ where
     type Response = S::Response;
     type Error = S::Error;
 
+    #[inline]
     fn call(&self, req: Req1) -> impl ServiceFuture<Self::Response, Self::Error> {
         self.service.call((self.f)(req))
     }
@@ -102,6 +105,7 @@ where
 {
     type Service = Arc<S>;
 
+    #[inline]
     fn make_service(&self, _target: Target) -> Self::Service {
         self.0.clone()
     }

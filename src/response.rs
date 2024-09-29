@@ -126,7 +126,11 @@ where
 impl IntoResponseParts for HeaderMap {
     #[inline]
     fn into_response_parts(self, parts: &mut ResponseParts) {
-        parts.headers.extend(self);
+        if parts.headers.is_empty() {
+            parts.headers = self; // reuse allocation
+        } else {
+            parts.headers.extend(self);
+        }
     }
 }
 
@@ -191,6 +195,7 @@ macro_rules! impl_into_response_parts {
             $($t: IntoResponseParts,)*
         {
             #[allow(non_snake_case)]
+            #[inline]
             fn into_response_parts(self, parts: &mut ResponseParts) {
                 let ($($t,)*) = self;
                 $($t.into_response_parts(parts);)*
@@ -209,6 +214,7 @@ macro_rules! impl_into_response {
             R: IntoResponse,
             $($t: IntoResponseParts,)*
         {
+            #[inline]
             fn into_response(self) -> Response {
                 let (res, $($t,)*) = self;
                 let (mut parts, body) = res.into_response().into_parts();

@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{extract::FromRequestParts, service::ServiceFuture, Layer, RequestParts, Service};
-use http::{header::HeaderName, HeaderValue, Request};
+use http::{header::HeaderName, Extensions, HeaderMap, HeaderValue, Request};
 
 /// Wrapper around [`std::net::IpAddr`] that can be extracted from the request parts.
 ///
@@ -180,14 +180,13 @@ where
     type Response = I::Response;
     type Error = I::Error;
 
-    fn call(&self, req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
-        let (mut parts, body) = req.into_parts();
-
-        if let Some(ip) = get_ip_from_parts(&parts) {
-            parts.extensions.insert(ip);
+    #[inline]
+    fn call(&self, mut req: Request<B>) -> impl ServiceFuture<Self::Response, Self::Error> {
+        if let Some(ip) = get_ip_from_headers(req.headers(), req.extensions()) {
+            req.extensions_mut().insert(ip);
         }
 
-        self.0.call(Request::from_parts(parts, body))
+        self.0.call(req)
     }
 }
 
@@ -199,7 +198,7 @@ impl<I> Layer<I> for RealIpLayer {
     }
 }
 
-pub(crate) fn get_ip_from_parts(parts: &RequestParts) -> Option<RealIp> {
+pub(crate) fn get_ip_from_headers(headers: &HeaderMap, extensions: &Extensions) -> Option<RealIp> {
     fn parse_ip(s: &HeaderValue) -> Option<IpAddr> {
         s.to_str()
             .ok()
@@ -221,15 +220,20 @@ pub(crate) fn get_ip_from_parts(parts: &RequestParts) -> Option<RealIp> {
     ];
 
     for header in &HEADERS {
-        if let Some(real_ip) = parts.headers.get(header).and_then(parse_ip) {
+        if let Some(real_ip) = headers.get(header).and_then(parse_ip) {
             return Some(RealIp(real_ip));
         }
     }
 
     // fallback to the socket address
-    if let Some(info) = parts.extensions.get::<SocketAddr>() {
+    if let Some(info) = extensions.get::<SocketAddr>() {
         return Some(RealIp(info.ip()));
     }
 
     None
+}
+
+#[inline]
+pub(crate) fn get_ip_from_parts(parts: &RequestParts) -> Option<RealIp> {
+    get_ip_from_headers(&parts.headers, &parts.extensions)
 }

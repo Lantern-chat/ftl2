@@ -28,6 +28,7 @@ where
 {
     type Output = Response;
 
+    #[inline]
     fn call(self, req: Request, state: S) -> impl Future<Output = Self::Output> + Send + 'static {
         // this is a very common code path, so I want the future here to be as optimized as possible
 
@@ -59,6 +60,7 @@ where
 {
     type Output = Fut::Output;
 
+    #[inline]
     fn call(self, _req: Request, _state: S) -> impl Future<Output = Self::Output> + Send + 'static {
         async move { self().await }
     }
@@ -79,6 +81,7 @@ macro_rules! impl_handler {
             type Output = Result<Fut::Output, crate::Error>;
 
             #[allow(non_snake_case)]
+            #[inline]
             fn call(self, req: Request, state: S) -> impl Future<Output = Self::Output> + Send + 'static {
                 async move {
                     #[allow(unused_mut)]
@@ -109,6 +112,7 @@ where
 {
     type Output = Response;
 
+    #[inline]
     fn call(self, _req: Request, _state: S) -> impl Future<Output = Response> + Send + 'static {
         std::future::ready(self.into_response())
     }
@@ -123,6 +127,7 @@ pub(crate) struct BoxedErasedHandler<S, R>(pub Arc<dyn ErasedHandler<S, R>>);
 // };
 
 impl<S, R> Clone for BoxedErasedHandler<S, R> {
+    #[inline]
     fn clone(&self) -> Self {
         BoxedErasedHandler(self.0.clone())
     }
@@ -147,6 +152,7 @@ where
     S: Send + Sync + 'static,
     R: 'static,
 {
+    #[inline]
     fn call(&self, req: Request, state: S) -> BoxFuture<'static, R> {
         (self.call)(self.handler.clone(), req, state)
     }
@@ -164,6 +170,7 @@ where
         }))
     }
 
+    #[inline]
     pub fn call(&self, req: Request, state: S) -> BoxFuture<'static, R> {
         self.0.call(req, state)
     }
