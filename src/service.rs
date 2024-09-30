@@ -1,4 +1,4 @@
-use std::{error::Error, future::Future, ops::Deref, sync::Arc};
+use std::{error::Error, future::Future, ops::Deref};
 
 pub trait ServiceFuture<R, E>: Future<Output = Result<R, E>> + Send {}
 
@@ -86,27 +86,17 @@ impl<S, F> MapServiceRequest<S, F> {
     }
 }
 
-#[derive(Clone)]
-#[repr(transparent)]
-pub struct FtlServiceToHyperMakeService<S>(Arc<S>);
-
-impl<S> FtlServiceToHyperMakeService<S>
+impl<S, T> MakeService<T, http::Request<hyper::body::Incoming>> for S
 where
-    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send + 'static,
+    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static>
+        + Clone
+        + Send
+        + 'static,
 {
-    pub fn new(service: S) -> Self {
-        Self(Arc::new(service))
-    }
-}
-
-impl<S, Target> MakeService<Target, http::Request<hyper::body::Incoming>> for FtlServiceToHyperMakeService<S>
-where
-    S: Service<http::Request<hyper::body::Incoming>, Error: Error + Send + Sync + 'static> + Send + 'static,
-{
-    type Service = Arc<S>;
+    type Service = S;
 
     #[inline]
-    fn make_service(&self, _target: Target) -> Self::Service {
-        self.0.clone()
+    fn make_service(&self, _target: T) -> Self::Service {
+        self.clone()
     }
 }

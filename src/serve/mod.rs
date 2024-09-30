@@ -322,6 +322,8 @@ impl<A> Server<A> {
                     _ = watcher.0.shutdown_notified() => return,
                 };
 
+                // NOTE: `conn` technically encompasses a physical connection but can handle multiple HTTP requests, especially
+                // with HTTP/2. Therefore, you don't have to feel bad if a service spawns its own tasks.
                 let mut conn = std::pin::pin!(builder.serve_connection_with_upgrades(
                     TokioIo::new(stream),
                     hyper::service::service_fn(move |mut req| {
@@ -333,18 +335,28 @@ impl<A> Server<A> {
                     }),
                 ));
 
-                tokio::select! {
+                let res = tokio::select! {
                     biased;
                     _ = watcher.0.shutdown_notified() => {
                         conn.as_mut().graceful_shutdown();
 
                         tokio::select! {
                             biased;
-                            _ = conn => {}
-                            _ = watcher.0.kill_notified() => {},
+                            res = conn => res,
+                            _ = watcher.0.kill_notified() => return,
                         }
                     }
-                    _ = &mut conn => {},
+                    res = &mut conn => res,
+                };
+
+                if let Err(err) = res {
+                    let err = match err.downcast::<hyper::Error>() {
+                        // honestly, ignore logging hyper errors
+                        Ok(_) => return,
+                        Err(err) => err,
+                    };
+
+                    log::error!("server error: {err:?}");
                 }
             });
         }

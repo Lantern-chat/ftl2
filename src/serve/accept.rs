@@ -37,6 +37,7 @@ where
     type Stream = I;
     type Service = S;
 
+    #[inline]
     fn accept(
         &self,
         stream: I,
@@ -50,6 +51,7 @@ impl<S: Send> Accept<TcpStream, S> for NoDelayAcceptor {
     type Stream = TcpStream;
     type Service = S;
 
+    #[inline]
     fn accept(
         &self,
         stream: TcpStream,

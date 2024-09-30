@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{num::NonZeroU64, time::Duration};
 
 use ftl::{
     body::{deferred::Deferred, Cbor, Json},
@@ -8,11 +8,14 @@ use ftl::{
         Extension, MatchedPath,
     },
     layers::{
-        //compression::CompressionLayer,
+        catch_panic::CatchPanic,
+        cloneable::Cloneable,
+        compression::CompressionLayer,
         convert_body::ConvertBody,
         deferred::DeferredEncoding,
         normalize::Normalize,
         rate_limit::{gcra::Quota, RateLimitLayerBuilder},
+        resp_timing::RespTimingLayer,
     },
     rewrite::RewriteService,
     router::Router,
@@ -23,7 +26,6 @@ use ftl::{
         Server,
         TlsConfig,
     },
-    service::FtlServiceToHyperMakeService,
     IntoResponse, Layer, Response,
 };
 
@@ -68,35 +70,46 @@ async fn main() {
 
     // setup graceful shutdown on ctrl-c
     server.handle().shutdown_on(async { _ = ctrl_c().await });
-    server.handle().set_shutdown_timeout(Some(Duration::from_secs(5)));
+    server.handle().set_shutdown_timeout(Some(Duration::from_secs(1)));
 
     // configure the server properties, such as HTTP/2 adaptive window and connect protocol
-    server.http2().adaptive_window(true).enable_connect_protocol(); // used for HTTP/2 Websockets
+    server
+        .http1()
+        .writev(true)
+        .pipeline_flush(true)
+        .http2()
+        .max_concurrent_streams(Some(400))
+        .adaptive_window(true)
+        .enable_connect_protocol(); // used for HTTP/2 Websockets
 
     // create a redirect server to bind at localhost:8080, under http, whilst sharing the same underlying Handle and config
     let redirect_server = server.rebind(["0.0.0.0:8080".parse().unwrap()]);
 
-    // serve the router service with the server
+    // spawn the HTTPS server
     tokio::spawn(
         // set acceptor to use the tls config, and set that acceptor to use NoDelay
         server.acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor)).serve(
-            FtlServiceToHyperMakeService::new(
-                (RealIpLayer, /*, CompressionLayer::new(),*/ Normalize::default()).layer(router.route_layer((
-                    rate_limit,
-                    ConvertBody::default(),
-                    DeferredEncoding::default(),
-                ))),
-            ),
+            (
+                RespTimingLayer::default(), // logs the time taken to process each request
+                CatchPanic::default(),      // spawns each request in a separate task and catches panics
+                Cloneable::default(),       // makes the service layered below it cloneable
+                RealIpLayer,                // extracts the real ip from the request
+                CompressionLayer::new(),    // compresses responses
+                Normalize::default(),       // normalizes the response structure
+                ConvertBody::default(),     // converts the body to the correct type
+                DeferredEncoding::default(), // encodes deferred responses
+            )
+                .layer(router.route_layer(rate_limit)), // routing layer with per-path rate limiting
         ),
     );
 
     tokio::spawn(
         // setup a redirect server to redirect all http traffic to https
-        redirect_server.serve(FtlServiceToHyperMakeService::new(RewriteService::permanent(|parts| {
+        redirect_server.serve(RewriteService::permanent(|parts| {
             let host = parts.extensions.get::<http::uri::Authority>().unwrap();
 
             format!("https://{}:8083{}", host.host(), parts.uri.path())
-        }))),
+        })),
     );
 
     // wait for the servers to finish

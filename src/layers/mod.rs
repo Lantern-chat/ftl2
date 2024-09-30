@@ -6,6 +6,8 @@ pub mod convert_body;
 pub mod handle_error;
 pub mod normalize;
 pub mod resp_timing;
+pub mod catch_panic;
+pub mod cloneable;
 
 #[cfg(any(feature = "json", feature = "cbor"))]
 pub mod deferred;
