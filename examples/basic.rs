@@ -70,7 +70,7 @@ async fn main() {
 
     // setup graceful shutdown on ctrl-c
     server.handle().shutdown_on(async { _ = ctrl_c().await });
-    server.handle().set_shutdown_timeout(Some(Duration::from_secs(1)));
+    server.handle().set_shutdown_timeout(Duration::from_secs(1));
 
     // configure the server properties, such as HTTP/2 adaptive window and connect protocol
     server

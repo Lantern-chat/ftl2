@@ -94,8 +94,8 @@ impl Handle {
     ///
     /// If set to `None`, the server will wait indefinitely for all connections to close. This
     /// is the default behavior.
-    pub fn set_shutdown_timeout(&self, timeout: Option<Duration>) {
-        *self.0.deadline.lock().unwrap() = timeout;
+    pub fn set_shutdown_timeout(&self, timeout: impl Into<Option<Duration>>) {
+        *self.0.deadline.lock().unwrap() = timeout.into();
     }
 
     /// Initiates a graceful shutdown of the server.
