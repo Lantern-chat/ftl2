@@ -1,3 +1,5 @@
+#![allow(clippy::multiple_bound_locations)]
+
 use std::future::Future;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
@@ -111,6 +113,26 @@ pub trait FileCache<S: Send + Sync> {
         method == Method::GET || method == Method::HEAD
     }
 }
+
+pub trait FileCacheExtra<S: Send + Sync>: FileCache<S> {
+    #[inline]
+    fn file(&self, parts: &RequestParts, state: &S, path: impl AsRef<Path>) -> impl Future<Output = Response> {
+        file(parts, state, path, self)
+    }
+
+    #[inline]
+    fn dir(
+        &self,
+        parts: &RequestParts,
+        state: &S,
+        path: impl AsRef<str>,
+        base: impl Into<PathBuf>,
+    ) -> impl Future<Output = Response> {
+        dir(parts, state, path, base, self)
+    }
+}
+
+impl<S: Send + Sync, F> FileCacheExtra<S> for F where F: FileCache<S> {}
 
 impl<S: Send + Sync, F: FileCache<S>> FileCache<S> for &F {
     type File = F::File;
@@ -287,11 +309,11 @@ pub fn sanitize_path(base: impl Into<PathBuf>, tail: &str) -> Result<PathBuf, Sa
 
 const DEFAULT_READ_BUF_SIZE: u64 = 1024 * 32;
 
-pub async fn file<S: Send + Sync>(
+pub async fn file<S: Send + Sync, F: FileCache<S> + ?Sized>(
     parts: &RequestParts,
     state: &S,
     request_path: impl AsRef<Path>,
-    cache: impl FileCache<S>,
+    cache: &F,
 ) -> Response {
     if !cache.is_method_allowed(&parts.method) {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
@@ -300,12 +322,12 @@ pub async fn file<S: Send + Sync>(
     file_reply(parts, state, request_path, cache, None).await
 }
 
-pub async fn dir<S: Send + Sync>(
+pub async fn dir<S: Send + Sync, F: FileCache<S> + ?Sized>(
     parts: &RequestParts,
     state: &S,
     request_path: impl AsRef<str>,
     base: impl Into<PathBuf>,
-    cache: impl FileCache<S>,
+    cache: &F,
 ) -> Response {
     if !cache.is_method_allowed(&parts.method) {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
@@ -332,11 +354,11 @@ pub async fn dir<S: Send + Sync>(
     file_reply(parts, state, buf, cache, metadata).await
 }
 
-async fn file_reply<S: Send + Sync, F: FileCache<S>>(
+async fn file_reply<S: Send + Sync, F: FileCache<S> + ?Sized>(
     req: &RequestParts,
     state: &S,
     path: impl AsRef<Path>,
-    cache: F,
+    cache: &F,
     metadata: Option<F::Meta>,
 ) -> Response {
     let req_start = Instant::now();
