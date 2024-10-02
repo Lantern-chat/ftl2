@@ -52,6 +52,30 @@ pub enum GCInterval {
     Time(Duration),
 }
 
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FallbackBehavior {
+    /// Use the global fallback rate limiter on a per-path basis but with unique methods
+    Path,
+    /// Use the global fallback rate limiter on a per-method basis but with unique paths
+    Method,
+    /// Use the global fallback rate limiter on a per-path and method basis
+    Both,
+
+    /// Do not use the global fallback rate limiter
+    #[default]
+    None,
+}
+
+impl From<bool> for FallbackBehavior {
+    fn from(b: bool) -> Self {
+        if b {
+            FallbackBehavior::Both
+        } else {
+            FallbackBehavior::None
+        }
+    }
+}
+
 impl Default for GCInterval {
     fn default() -> Self {
         GCInterval::Requests(8192)
@@ -82,18 +106,19 @@ impl From<Duration> for GCInterval {
 /// A route for rate limiting, consisting of a path and method.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Route<'a> {
-    pub method: Cow<'a, Method>,
+    pub method: Option<Cow<'a, Method>>,
     pub path: Cow<'a, str>,
 }
 
-impl<'a, P> From<(Method, P)> for Route<'a>
+impl<'a, M, P> From<(M, P)> for Route<'a>
 where
     P: Into<Cow<'a, str>>,
+    M: Into<Option<Method>>,
 {
-    fn from((method, path): (Method, P)) -> Self {
+    fn from((method, path): (M, P)) -> Self {
         Self {
             path: path.into(),
-            method: Cow::Owned(method),
+            method: method.into().map(Cow::Owned),
         }
     }
 }
@@ -102,9 +127,9 @@ macro_rules! decl_route_methods {
     ($($fn:ident => $method:ident),*) => {
         impl<'a> Route<'a> {
             /// Create a new route with the given method and path.
-            pub fn new(method: Method, path: impl Into<Cow<'a, str>>) -> Self {
+            pub fn new(method: impl Into<Option<Method>>, path: impl Into<Cow<'a, str>>) -> Self {
                 Route {
-                    method: Cow::Owned(method),
+                    method: method.into().map(Cow::Owned),
                     path: path.into(),
                 }
             }
@@ -134,7 +159,7 @@ decl_route_methods! {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct RouteWithKey<T> {
     path: MatchedPath,
-    method: Method,
+    method: Option<Method>,
     key: T,
 }
 
@@ -143,7 +168,7 @@ impl<T> RouteWithKey<T> {
     fn as_route(&self) -> Route {
         Route {
             path: Cow::Borrowed(&*self.path),
-            method: Cow::Borrowed(&self.method),
+            method: self.method.as_ref().map(Cow::Borrowed),
         }
     }
 }
@@ -209,7 +234,7 @@ pub struct RateLimitLayerBuilder<K = ()> {
     quotas: Quotas,
     default_quota: gcra::Quota,
     set_ext: Option<Box<dyn SetExtension<K>>>,
-    global_fallback: bool,
+    global_fallback: FallbackBehavior,
     gc_interval: GCInterval,
     shutdown: BuilderDropNotify,
 }
@@ -236,6 +261,7 @@ pub struct RateLimitLayer<K: Key = ()> {
 /// without knowing the type of the key except when the handler is defined and not further.
 trait SetExtension<K: Key>: Send + Sync + 'static {
     fn set_extension(&self, req: &mut Extensions, key: &RouteWithKey<K>, layer: RateLimitLayer<K>);
+    fn get_extension_key(&self, req: &Extensions) -> Option<K>;
 }
 
 struct DoSetExtension;
@@ -255,6 +281,10 @@ where
         }
 
         req.insert(rl);
+    }
+
+    fn get_extension_key(&self, req: &Extensions) -> Option<K> {
+        req.get::<K>().cloned()
     }
 }
 
@@ -282,6 +312,17 @@ impl<K: Key> RateLimitLayer<K> {
     pub fn builder() -> RateLimitLayerBuilder<K> {
         RateLimitLayerBuilder::new()
     }
+
+    pub fn global_fallback(&self, key: K, method: impl Into<Option<Method>>) -> extensions::RateLimiter<K> {
+        extensions::RateLimiter {
+            key: RouteWithKey {
+                path: MatchedPath::Fallback,
+                method: method.into(),
+                key,
+            },
+            layer: self.clone(),
+        }
+    }
 }
 
 impl<K: Key> RateLimitLayerBuilder<K> {
@@ -291,7 +332,7 @@ impl<K: Key> RateLimitLayerBuilder<K> {
             quotas: Default::default(),
             default_quota: Default::default(),
             set_ext: None,
-            global_fallback: false,
+            global_fallback: FallbackBehavior::default(),
             gc_interval: GCInterval::default(),
             shutdown: BuilderDropNotify::default(),
         }
@@ -333,8 +374,8 @@ impl<K: Key> RateLimitLayerBuilder<K> {
 
     /// Set whether to use a global fallback shared rate-limiter for all paths not explicitly defined.
     #[must_use]
-    pub fn with_global_fallback(mut self, global_fallback: bool) -> Self {
-        self.global_fallback = global_fallback;
+    pub fn with_global_fallback(mut self, global_fallback: impl Into<FallbackBehavior>) -> Self {
+        self.global_fallback = global_fallback.into();
         self
     }
 
@@ -437,8 +478,18 @@ impl<K: Key> RateLimitLayer<K> {
         let quota = match self.builder.quotas.get(&key.as_route()).copied() {
             Some(quota) => quota,
             None => {
-                if self.builder.global_fallback {
-                    key.path = MatchedPath::Fallback;
+                match self.builder.global_fallback {
+                    FallbackBehavior::Path => {
+                        key.method = None;
+                    }
+                    FallbackBehavior::Method => {
+                        key.path = MatchedPath::Fallback;
+                    }
+                    FallbackBehavior::Both => {
+                        key.path = MatchedPath::Fallback;
+                        key.method = None;
+                    }
+                    FallbackBehavior::None => {}
                 }
 
                 self.builder.default_quota
@@ -449,7 +500,7 @@ impl<K: Key> RateLimitLayer<K> {
     }
 }
 
-async fn get_user_key<K>(parts: &mut RequestParts) -> Result<K, K::Rejection>
+async fn get_user_key<K>(parts: &mut RequestParts, ext: Option<&dyn SetExtension<K>>) -> Result<K, K::Rejection>
 where
     K: Key + FromRequestParts<()>,
 {
@@ -467,6 +518,10 @@ where
 
     if same_ty::<K, ()>() {
         return Ok(unsafe { transmute_copy::<_, K>(&()) });
+    }
+
+    if let Some(key) = ext.and_then(|ext| ext.get_extension_key(&parts.extensions)) {
+        return Ok(key);
     }
 
     use crate::extract::real_ip::{self, RealIp, RealIpPrivacyMask};
@@ -521,9 +576,11 @@ where
 
         async move {
             let key = RouteWithKey {
-                key: get_user_key(&mut parts).await.map_err(Error::KeyRejection)?,
+                key: get_user_key(&mut parts, self.layer.builder.set_ext.as_deref())
+                    .await
+                    .map_err(Error::KeyRejection)?,
                 path,
-                method: parts.method.clone(),
+                method: Some(parts.method.clone()),
             };
 
             let res = self.layer.req_peek_key(key, now, |key| {
@@ -697,8 +754,8 @@ pub mod extensions {
         }
 
         /// Get the method of the route that was rate limited.
-        pub fn method(&self) -> &Method {
-            &self.key.method
+        pub fn method(&self) -> Option<&Method> {
+            self.key.method.as_ref()
         }
 
         /// Get the quota for the route that was rate limited.
