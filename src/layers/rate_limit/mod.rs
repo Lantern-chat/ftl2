@@ -792,6 +792,43 @@ pub mod extensions {
         pub fn clean_sync(&self, before: Instant) {
             self.layer.limiter.clean_sync(before);
         }
+
+        /// Performs an additional rate limit request.
+        pub async fn req(&self, now: Instant) -> Result<(), RateLimitError>
+        where
+            K: Clone,
+        {
+            let quota = match self.key.path {
+                MatchedPath::Fallback => self.layer.builder.default_quota,
+                MatchedPath::Matched(_) => self
+                    .layer
+                    .builder
+                    .quotas
+                    .get(&self.key.as_route())
+                    .copied()
+                    .unwrap_or(self.layer.builder.default_quota),
+            };
+
+            self.layer.limiter.req(self.key.clone(), quota, now).await
+        }
+
+        pub fn req_sync(&self, now: Instant) -> Result<(), RateLimitError>
+        where
+            K: Clone,
+        {
+            let quota = match self.key.path {
+                MatchedPath::Fallback => self.layer.builder.default_quota,
+                MatchedPath::Matched(_) => self
+                    .layer
+                    .builder
+                    .quotas
+                    .get(&self.key.as_route())
+                    .copied()
+                    .unwrap_or(self.layer.builder.default_quota),
+            };
+
+            self.layer.limiter.req_sync(self.key.clone(), quota, now)
+        }
     }
 
     #[must_use]
