@@ -2,7 +2,7 @@ use crate::{body::Body, service::ServiceFuture, Layer, Request, Service};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct ConvertBody<S>(pub S);
+pub struct ConvertBody<S = ()>(pub S);
 
 impl<S> Layer<S> for ConvertBody<()> {
     type Service = ConvertBody<S>;

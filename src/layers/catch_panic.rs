@@ -21,7 +21,7 @@ impl<S> Layer<S> for CatchPanic {
 impl<S, Req, ResBody> Service<Req> for CatchPanic<S>
 where
     S: Service<Req, Response = http::Response<ResBody>> + Clone + 'static,
-    ResBody: From<()> + Send + 'static,
+    ResBody: Default + Send + 'static,
     Req: Send + 'static,
 {
     type Response = S::Response;
@@ -35,7 +35,7 @@ where
             Err(err) => {
                 log::error!("Service panicked: {:?}", err);
 
-                let mut resp = http::Response::new(ResBody::from(()));
+                let mut resp = http::Response::new(ResBody::default());
                 *resp.status_mut() = http::StatusCode::INTERNAL_SERVER_ERROR;
                 Ok(resp)
             }

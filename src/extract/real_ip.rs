@@ -160,20 +160,13 @@ impl<S> FromRequestParts<S> for RealIpPrivacyMask {
     }
 }
 
-/// [`Service`] that adds the [`RealIp`] extension to the request parts if available.
+/// [`Layer`]/[`Service`] that adds the [`RealIp`] extension to the request parts if available.
 ///
-/// This extension can be reused by other services or extractors, such as [`RealIp`] itself.
-#[derive(Debug, Clone, Copy)]
-#[repr(transparent)]
-pub struct RealIpService<I>(I);
+/// This extension can then be reused by other services or extractors, such as [`RealIp`] itself.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct RealIpLayer<S = ()>(pub S);
 
-/// [`Layer`] that adds the [`RealIp`] extension to the request parts if available.
-///
-/// This extension can be reused by other services or extractors, such as [`RealIp`] itself.
-#[derive(Debug, Clone, Copy)]
-pub struct RealIpLayer;
-
-impl<B, I> Service<Request<B>> for RealIpService<I>
+impl<B, I> Service<Request<B>> for RealIpLayer<I>
 where
     I: Service<Request<B>>,
 {
@@ -191,10 +184,10 @@ where
 }
 
 impl<I> Layer<I> for RealIpLayer {
-    type Service = RealIpService<I>;
+    type Service = RealIpLayer<I>;
 
     fn layer(&self, inner: I) -> Self::Service {
-        RealIpService(inner)
+        RealIpLayer(inner)
     }
 }
 

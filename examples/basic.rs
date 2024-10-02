@@ -90,13 +90,13 @@ async fn main() {
         // set acceptor to use the tls config, and set that acceptor to use NoDelay
         server.acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor)).serve(
             (
-                RespTimingLayer::default(), // logs the time taken to process each request
-                CatchPanic::default(),      // spawns each request in a separate task and catches panics
-                Cloneable::default(),       // makes the service layered below it cloneable
-                RealIpLayer,                // extracts the real ip from the request
-                CompressionLayer::new(),    // compresses responses
-                Normalize::default(),       // normalizes the response structure
-                ConvertBody::default(),     // converts the body to the correct type
+                RespTimingLayer::default(),  // logs the time taken to process each request
+                CatchPanic::default(),       // spawns each request in a separate task and catches panics
+                Cloneable::default(),        // makes the service layered below it cloneable
+                RealIpLayer::default(),      // extracts the real ip from the request
+                CompressionLayer::new(),     // compresses responses
+                Normalize::default(),        // normalizes the response structure
+                ConvertBody::default(),      // converts the body to the correct type
                 DeferredEncoding::default(), // encodes deferred responses
             )
                 .layer(router.route_layer(rate_limit)), // routing layer with per-path rate limiting
