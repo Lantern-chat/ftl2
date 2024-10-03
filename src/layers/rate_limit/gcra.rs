@@ -46,16 +46,23 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
 
     /// Cleans up any entries that have not been accessed since the given time.
     pub async fn clean(&self, before: Instant) {
-        let before = self.relative(before);
-        self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= before).await;
-        self.last_gc.store(1, Ordering::Relaxed); // manual reset
+        self.last_gc.store(1, Ordering::Relaxed);
+        self.gc(self.relative(before)).await;
     }
 
     /// Synchronous version of [`RateLimiter::clean`].
     pub fn clean_sync(&self, before: Instant) {
-        let before = self.relative(before);
-        self.limits.retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= before);
-        self.last_gc.store(1, Ordering::Relaxed); // manual reset
+        self.last_gc.store(1, Ordering::Relaxed);
+        self.gc_sync(self.relative(before));
+    }
+
+    /// Note: This does not reset the last_gc counter, as that should continue ticking while this is processing.
+    pub(crate) async fn gc(&self, now: u64) {
+        self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now).await;
+    }
+
+    pub(crate) fn gc_sync(&self, now: u64) {
+        self.limits.retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now);
     }
 
     /// Perform a request, returning an error if the request is too soon.
@@ -64,7 +71,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
 
         let Some(res) = self.limits.read_async(&key, |_, gcra| gcra.req(quota, now)).await else {
             if self.should_gc() {
-                self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now).await;
+                self.gc(now).await;
             }
 
             return match self.limits.entry_async(key).await {
@@ -85,7 +92,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
 
         let Some(res) = self.limits.read(&key, |_, gcra| gcra.req(quota, now)) else {
             if self.should_gc() {
-                self.limits.retain(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now);
+                self.gc_sync(now);
             }
 
             return match self.limits.entry(key) {
@@ -131,7 +138,7 @@ impl<K: Eq + Hash, H: BuildHasher> RateLimiter<K, H> {
 
             // since we hit the slow path, perform garbage collection
             if self.should_gc() {
-                self.limits.retain_async(move |_, v| *AtomicU64::get_mut(&mut v.0) >= now).await;
+                self.gc(now).await;
             }
 
             let entry = match self.limits.entry_async(key).await {
