@@ -84,6 +84,7 @@ pub struct Router<STATE, RETURN = Response, SERVICE = HandlerService<STATE, RETU
     routes: HashMap<NodeId, Route<SERVICE>, rustc_hash::FxRandomState>,
     state: STATE,
     counter: u64,
+    trim_trailing_slash: bool,
     _return: PhantomData<fn() -> RETURN>,
 }
 
@@ -107,12 +108,18 @@ where
             routes: HashMap::default(),
             state,
             counter: 1,
+            trim_trailing_slash: true,
             _return: PhantomData,
         }
     }
 
     pub fn state(&self) -> &STATE {
         &self.state
+    }
+
+    pub fn trim_trailing_slash(mut self, trim: bool) -> Self {
+        self.trim_trailing_slash = trim;
+        self
     }
 
     pub fn route_layer<L>(self, layer: L) -> Router<STATE, RETURN, L::Service>
@@ -134,6 +141,7 @@ where
             r_any: self.r_any,
             state: self.state,
             counter: self.counter,
+            trim_trailing_slash: self.trim_trailing_slash,
             _return: PhantomData,
         }
     }
@@ -377,7 +385,7 @@ impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
     pub(crate) fn match_route<'p>(
         &self,
         method: &Method,
-        path: &'p str,
+        mut path: &'p str,
     ) -> Result<matchit::Match<'_, 'p, &Route<SERVICE>>, Option<&Route<SERVICE>>> {
         let mut any = false;
 
@@ -397,14 +405,18 @@ impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
             }
         };
 
-        let res = match router.at(path) {
+        if self.trim_trailing_slash {
+            path = path.trim_end_matches('/');
+        }
+
+        let maybe_match = match router.at(path) {
             Ok(match_) => Some(match_),
             // fallback to any if not already matching on any
             Err(_) if !any => self.r_any.at(path).ok(),
             _ => None,
         };
 
-        match res {
+        match maybe_match {
             Some(match_) => {
                 let handler = match self.routes.get(match_.value) {
                     Some(handler) => handler,
@@ -416,7 +428,7 @@ impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
                     params: match_.params,
                 })
             }
-            None => Err(self.routes.get(&0)),
+            None => Err(self.routes.get(&0)), // fallback route
         }
     }
 }
