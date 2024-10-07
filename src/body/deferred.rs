@@ -1,6 +1,31 @@
+use std::marker::PhantomData;
+
 use futures::stream::StreamExt;
 
 use crate::{IntoResponse, Response};
+
+/// A type with an associated static value, which can be used to create a deferred response
+/// without needing to allocate a new value each time.
+///
+/// Example:
+/// ```rust,ignore
+/// #[derive(serde::Serialize)]
+/// struct MyValue {
+///    field: u32,
+/// }
+///
+/// impl StaticValue for MyValue {
+///     fn value() -> &'static Self {
+///         &MyValue { field: 42 }
+///     }
+/// }
+///
+/// // doesn't allocate
+/// Deferred::new_static::<MyValue>()
+/// ```
+pub trait StaticValue: serde::Serialize + 'static {
+    fn value() -> &'static Self;
+}
 
 pub(crate) enum DeferredInner {
     Single(Box<dyn IndirectSerialize>),
@@ -46,6 +71,29 @@ impl Deferred {
         T: serde::Serialize + Send + 'static,
     {
         Self(DeferredInner::Single(Box::new(value)))
+    }
+
+    /// Crate a new deferred value from a static value, notably without allocating.
+    ///
+    /// See [`StaticValue`] for more information.
+    #[must_use]
+    pub fn new_static<T: StaticValue>() -> Self {
+        // ZST to avoid allocating when boxing the deferred response
+        struct ValueSerializer<T: 'static>(PhantomData<&'static T>);
+
+        // a value is not actually sent across threads, so this is safe
+        unsafe impl<T: 'static> Send for ValueSerializer<T> {}
+
+        impl<T: StaticValue> serde::Serialize for ValueSerializer<T> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                T::value().serialize(serializer)
+            }
+        }
+
+        Deferred::new(ValueSerializer::<T>(PhantomData))
     }
 
     /// Create a new deferred value from a stream of values, to be serialized as an array or sequence.
