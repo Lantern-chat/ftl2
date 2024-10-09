@@ -1,7 +1,6 @@
 use std::{
     any::TypeId,
     borrow::Cow,
-    collections::HashMap,
     convert::Infallible,
     future::Ready,
     hash::Hash,
@@ -9,6 +8,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+
+use hashbrown::HashMap;
 
 use http::{Extensions, Method, Request};
 
@@ -174,7 +175,7 @@ impl<T> RouteWithKey<T> {
 }
 
 /// Hashmap of quotas for rate limiting, mapping a path as passed to [`Router`](crate::router::Router) to a [`gcra::Quota`].
-type Quotas = HashMap<Route<'static>, gcra::Quota, rustc_hash::FxRandomState>;
+type Quotas = HashMap<Route<'static>, gcra::Quota, foldhash::fast::RandomState>;
 
 #[derive(Debug, Clone)]
 enum MatchedPath {
@@ -252,7 +253,7 @@ impl<K> Drop for RateLimitLayerBuilder<K> {
 /// Note: The limiter is shared across all clones of the layer and service.
 pub struct RateLimitLayer<K: Key = ()> {
     builder: Arc<RateLimitLayerBuilder<K>>,
-    limiter: Arc<gcra::RateLimiter<RouteWithKey<K>, rustc_hash::FxRandomState>>,
+    limiter: Arc<gcra::RateLimiter<RouteWithKey<K>>>,
 }
 
 /// Object-safe trait for setting an extension on a request.
@@ -635,7 +636,7 @@ where
     pub fn build(self) -> RateLimitLayer<K> {
         let limiter = Arc::new(gcra::RateLimiter::new(
             self.gc_interval.to_requests(),
-            rustc_hash::FxRandomState::default(),
+            Default::default(),
         ));
 
         if let GCInterval::Time(d) = self.gc_interval {

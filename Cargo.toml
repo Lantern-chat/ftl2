@@ -56,7 +56,8 @@ tokio-openssl = { version = "0.6", optional = true }
 
 # GCRA
 scc = { version = "2", optional = true }
-ahash = { version = "0.8", optional = true }
+foldhash = { version = "0.1", optional = true }
+hashbrown = { version = "0.15", optional = true }
 
 async-compression = { version = "0.4", optional = true, default-features = false, features = ["tokio"] }
 aho-corasick = { version = "1.1.3", optional = true }
@@ -82,7 +83,7 @@ tls-rustls = ["tls-rustls-no-provider", "rustls/aws-lc-rs"]
 tls-rustls-no-provider = ["arc-swap", "rustls", "rustls-pemfile", "tokio/fs", "tokio/time", "tokio-rustls", "rustls-pki-types"]
 tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
 tower-service = ["dep:tower-service"]
-gcra = ["dep:scc", "dep:ahash"]
+gcra = ["dep:scc", "dep:foldhash", "dep:hashbrown"]
 fs = ["tokio/fs", "mime_db"]
 
 compression-all = ["compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]

@@ -16,7 +16,7 @@ use scc::hash_map::{Entry, HashMap};
 /// A rate limiter that uses the Generic Cell Rate Algorithm (GCRA) to limit the rate of requests.
 ///
 /// This rate limiter is designed to be used in a concurrent environment, and is thread-safe.
-pub struct RateLimiter<K: Eq + Hash, H: BuildHasher = std::collections::hash_map::RandomState> {
+pub struct RateLimiter<K: Eq + Hash, H: BuildHasher = foldhash::fast::RandomState> {
     start: Instant,
     gc_interval: u64,
     last_gc: AtomicU64,
