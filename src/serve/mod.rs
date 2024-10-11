@@ -329,8 +329,10 @@ impl<A> Server<A> {
                     hyper::service::service_fn(move |mut req| {
                         req.extensions_mut().insert(socket_addr);
 
+                        // in practice, this should be a single `Arc` clone,
+                        // and it allows us to make `call` non-'static, reducing
+                        // the number of clones internally.
                         let service = service.clone();
-
                         async move { service.call(req).await }
                     }),
                 ));

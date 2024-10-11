@@ -25,6 +25,8 @@ impl Default for Encoding {
 
         #[cfg(feature = "cbor")]
         return Encoding::Cbor;
+
+        panic!("no serialization format (currently json or cbor) enabled");
     }
 }
 
@@ -106,6 +108,7 @@ where
             let (mut parts, body) = res.into_parts();
 
             match body.0 {
+                #[allow(unused)]
                 BodyInner::Deferred(deferred) => {
                     let mut encoding = self.default_encoding;
 

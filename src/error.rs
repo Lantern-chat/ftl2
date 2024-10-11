@@ -83,6 +83,7 @@ pub enum Error {
 
 pub type BoxError = Box<dyn core::error::Error + Send + Sync>;
 
+#[allow(dead_code)] // only used when certain features are enabled
 pub(crate) fn io_other<E: Into<BoxError>>(error: E) -> io::Error {
     io::Error::new(ErrorKind::Other, error)
 }

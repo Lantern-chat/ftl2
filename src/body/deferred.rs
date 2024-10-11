@@ -35,6 +35,7 @@ pub(crate) enum DeferredInner {
 use crate::layers::deferred::Encoding;
 
 impl DeferredInner {
+    #[allow(unused)]
     pub fn into_response(self, encoding: Encoding) -> Response {
         match self {
             DeferredInner::Array(mut stream) => match encoding {
