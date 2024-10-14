@@ -5,6 +5,7 @@ use tokio::{
     net::TcpStream,
 };
 
+#[cfg(feature = "limited-acceptor")]
 pub mod limited;
 
 /// An asynchronous function to modify io stream and service.

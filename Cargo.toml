@@ -85,6 +85,7 @@ tls-openssl = ["arc-swap", "openssl", "tokio-openssl"]
 tower-service = ["dep:tower-service"]
 gcra = ["dep:scc", "dep:foldhash", "dep:hashbrown"]
 fs = ["tokio/fs", "mime_db"]
+limited-acceptor = ["dep:scc", "dep:foldhash"]
 
 compression-all = ["compression-br", "compression-deflate", "compression-gzip", "compression-zstd"]
 compression-br = ["_meta_compression", "async-compression/brotli"]
