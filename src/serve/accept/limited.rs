@@ -22,6 +22,7 @@ pub struct LimitedTcpAcceptor<A> {
     acceptor: A,
     limit: usize,
     conns: Arc<ConnTable>,
+    privacy_mask: bool,
 }
 
 impl<A> LimitedTcpAcceptor<A> {
@@ -30,7 +31,18 @@ impl<A> LimitedTcpAcceptor<A> {
             acceptor,
             limit,
             conns: Arc::new(ConnTable::default()),
+            privacy_mask: false,
         }
+    }
+
+    /// Masks IPv6 addresses to remove the last 64 bits.
+    ///
+    /// This is useful for making sure clients with randomized IPv6 interfaces
+    /// aren't treated as different clients. This can be common in some networks
+    /// that attempt to preserve privacy.
+    pub fn with_privacy_mask(mut self, privacy_mask: bool) -> Self {
+        self.privacy_mask = privacy_mask;
+        self
     }
 }
 
@@ -59,9 +71,18 @@ where
         service: S,
     ) -> impl Future<Output = io::Result<(Self::Stream, Self::Service)>> + Send {
         async move {
-            let ip = stream.peer_addr()?.ip();
+            let mut ip = stream.peer_addr()?.ip();
 
             let (stream, service) = self.acceptor.accept(stream, service).await?;
+
+            if self.privacy_mask {
+                ip = match ip {
+                    IpAddr::V4(ip) => IpAddr::V4(ip),
+                    IpAddr::V6(ip) => {
+                        IpAddr::V6(From::from(ip.to_bits() & 0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000))
+                    }
+                };
+            }
 
             let mut failed = false;
 

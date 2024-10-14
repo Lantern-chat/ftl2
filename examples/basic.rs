@@ -100,7 +100,7 @@ async fn main() {
                     // TCP_NODELAY, and peek at the first byte of the stream
                     PeekingAcceptor(NoDelayAcceptor),
                     50,
-                )
+                ).with_privacy_mask(true) // IPv6 privacy mask
             ),
         );
 
