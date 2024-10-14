@@ -13,7 +13,7 @@ bytes = "1.0.1"
 futures = "0.3"
 
 tracing = { version = "0.1", default-features = false, features = ["log", "std"] }
-tokio = { version = "1", features = ["macros", "net", "sync"] }
+tokio = { version = "1", features = ["macros", "net", "sync", "rt-multi-thread"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tokio-stream = "0.1.14"
 tokio-tungstenite = "0.24"

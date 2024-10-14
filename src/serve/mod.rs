@@ -8,6 +8,7 @@ pub mod accept;
 
 use core::error::Error;
 
+use futures::{stream::FusedStream, FutureExt, Stream, StreamExt};
 use hyper::body::Incoming;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
@@ -18,10 +19,12 @@ use std::{
     future::Future,
     io::{self},
     net::SocketAddr,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -276,94 +279,153 @@ impl<A> Server<A> {
 
         let builder = Arc::new(builder);
 
-        // bind or use existing connection
-        let incoming = match listener {
-            Listener::Bind(addr) => TcpListener::bind(&*addr).await,
-            Listener::Std(std_listener) => {
-                std_listener.set_nonblocking(true)?;
-                TcpListener::from_std(std_listener)
-            }
-        }?;
-
-        // only acquire this once before the loop
-        let mut shutdown = std::pin::pin!(handle.shutdown_notified());
-
-        loop {
-            // accept incoming connections, with slight backoff on failure
-            let accept_loop = async {
-                loop {
-                    match incoming.accept().await {
-                        Ok(value) => break value,
-                        Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
-                    }
-                }
-            };
-
-            // stop server loop if shutdown is requested
-            let (stream, socket_addr) = tokio::select! {
-                biased;
-                res = accept_loop => res,
-                _ = &mut shutdown => break,
-            };
-
-            let service = make_service.make_service(socket_addr);
-
-            let acceptor = acceptor.clone();
-            let builder = builder.clone();
-            let watcher = handle.watcher();
-
-            tokio::spawn(async move {
-                let (stream, service) = tokio::select! {
-                    biased;
-                    res = acceptor.accept(stream, service) => match res {
-                        Ok(value) => value,
-                        Err(_) => return,
-                    },
-                    _ = watcher.0.shutdown_notified() => return,
-                };
-
-                // NOTE: `conn` technically encompasses a physical connection but can handle multiple HTTP requests, especially
-                // with HTTP/2. Therefore, you don't have to feel bad if a service spawns its own tasks.
-                let mut conn = std::pin::pin!(builder.serve_connection_with_upgrades(
-                    TokioIo::new(stream),
-                    hyper::service::service_fn(move |mut req| {
-                        req.extensions_mut().insert(socket_addr);
-
-                        // in practice, this should be a single `Arc` clone,
-                        // and it allows us to make `call` non-'static, reducing
-                        // the number of clones internally.
-                        let service = service.clone();
-                        async move { service.call(req).await }
-                    }),
-                ));
-
-                let res = tokio::select! {
-                    biased;
-                    _ = watcher.0.shutdown_notified() => {
-                        conn.as_mut().graceful_shutdown();
-
-                        tokio::select! {
-                            biased;
-                            res = conn => res,
-                            _ = watcher.0.kill_notified() => return,
-                        }
-                    }
-                    res = &mut conn => res,
-                };
-
-                if let Err(err) = res {
-                    let err = match err.downcast::<hyper::Error>() {
-                        // honestly, ignore logging hyper errors
-                        Ok(_) => return,
-                        Err(err) => err,
-                    };
-
-                    log::error!("server error: {err:?}");
-                }
-            });
+        #[pin_project::pin_project]
+        struct IncomingThrottle {
+            #[pin]
+            incoming: TcpListener,
+            #[pin]
+            throttle: Option<tokio::time::Sleep>,
         }
 
-        drop(incoming);
+        impl FusedStream for IncomingThrottle {
+            fn is_terminated(&self) -> bool {
+                // TODO: Change this when errors potentially terminate the stream.
+                false
+            }
+        }
+
+        impl Stream for IncomingThrottle {
+            type Item = (TcpStream, SocketAddr);
+
+            fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                let mut this = self.project();
+
+                loop {
+                    if let Some(throttle) = this.throttle.as_mut().as_pin_mut() {
+                        match throttle.poll(cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(_) => this.throttle.set(None),
+                        }
+                    }
+
+                    match this.incoming.poll_accept(cx) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(Ok(value)) => return Poll::Ready(Some(value)),
+                        Poll::Ready(Err(_)) => {
+                            // TODO: Inspect error and potentially return `None` if it's a fatal error?
+                            this.throttle.set(Some(tokio::time::sleep(Duration::from_millis(50))));
+
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        #[pin_project::pin_project]
+        struct FutureWithAssociatedData<F, T> {
+            #[pin]
+            future: F,
+            data: Option<T>,
+        }
+
+        impl<F, T> Future for FutureWithAssociatedData<F, T>
+        where
+            F: Future,
+        {
+            type Output = (F::Output, T);
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let this = self.project();
+
+                match this.future.poll(cx) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(value) => Poll::Ready((value, this.data.take().expect("polled after completion"))),
+                }
+            }
+        }
+
+        // bind or use existing connection, then setup throttling
+        let mut incoming = std::pin::pin!(IncomingThrottle {
+            incoming: match listener {
+                Listener::Bind(addr) => TcpListener::bind(&*addr).await,
+                Listener::Std(std_listener) => {
+                    std_listener.set_nonblocking(true)?;
+                    TcpListener::from_std(std_listener)
+                }
+            }?,
+            throttle: None,
+        });
+
+        // use a FuturesUnordered to handle the accept process without allocating an entire task.
+        // This may help avert DoS attacks by limiting the number of tasks that can be spawned.
+        let mut accepting = std::pin::pin!(futures::stream::FuturesUnordered::new());
+
+        // since this is fused, create the future ahead of time to simplify polling.
+        let mut shutdown = std::pin::pin!(handle.shutdown_notified().fuse());
+
+        loop {
+            // futures::select! is required over tokio::select! due to the `accepting` stream,
+            // which may be empty, but not terminated.
+            futures::select_biased! {
+                res = incoming.next() => match res {
+                    // NOTE: This `None` branch is technically unreachable due to the current implementation.
+                    // However, I'd rather keep it around for future-proofing.
+                    None => break,
+                    Some((stream, socket_addr)) => accepting.push(FutureWithAssociatedData {
+                        future: acceptor.accept(stream, make_service.make_service(socket_addr)),
+                        data: Some((socket_addr,)),
+                    }),
+                },
+
+                accepted = accepting.select_next_some() => match accepted {
+                    (Ok((stream, service)), (socket_addr,)) => {
+                        let builder = builder.clone();
+                        let watcher = handle.watcher();
+
+                        // spawn new task to handle real HTTP connection
+                        tokio::spawn(async move {
+                            let mut conn = std::pin::pin!(builder.serve_connection_with_upgrades(
+                                TokioIo::new(stream),
+                                hyper::service::service_fn(move |mut req| {
+                                    req.extensions_mut().insert(socket_addr);
+
+                                    // in practice, this should be a single `Arc` clone,
+                                    // and it allows us to make `call` non-'static, reducing
+                                    // the number of clones internally.
+                                    let service = service.clone();
+                                    async move { service.call(req).await }
+                                }),
+                            ));
+
+                            loop {
+                                tokio::select! {
+                                    biased;
+
+                                    Err(err) = &mut conn => {
+                                        // honestly, ignore logging hyper errors, so only log if it's not hyper
+                                        if let Err(err) = err.downcast::<hyper::Error>() {
+                                            log::error!("server error: {err:?}");
+                                        }
+
+                                        break;
+                                    },
+
+                                    _ = watcher.0.shutdown_notified() => {
+                                        conn.as_mut().graceful_shutdown();
+                                    }
+
+                                    _ = watcher.0.kill_notified() => break,
+                                }
+                            }
+                        });
+                    },
+                    _ => continue,
+                },
+
+                _ = &mut shutdown => break,
+            }
+        }
 
         handle.wait_internal().await;
 
