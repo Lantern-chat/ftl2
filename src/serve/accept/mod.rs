@@ -124,3 +124,33 @@ where
         )
     }
 }
+
+/// An acceptor that peeks at the first byte of the stream. Useful in combination with [`TimeoutAcceptor`],
+/// as it allows to cancel the accept if the first byte is not received in time.
+///
+/// See https://github.com/tokio-rs/axum/issues/2741#issuecomment-2350774638 for more details.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(transparent)]
+pub struct PeekingAcceptor<A>(pub A);
+
+impl<S: Send, A> Accept<TcpStream, S> for PeekingAcceptor<A>
+where
+    A: Accept<TcpStream, S, Stream: AsyncRead>,
+{
+    type Service = A::Service;
+    type Stream = A::Stream;
+
+    fn accept(
+        &self,
+        stream: TcpStream,
+        service: S,
+    ) -> impl Future<Output = io::Result<(Self::Stream, Self::Service)>> + Send {
+        async move {
+            if 0 == stream.peek(&mut [0u8; 1]).await? {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stream closed"));
+            }
+
+            self.0.accept(stream, service).await
+        }
+    }
+}

@@ -87,11 +87,21 @@ async fn main() {
 
     // spawn the HTTPS server
     tokio::spawn({
-        use ftl::serve::accept::{limited::LimitedTcpAcceptor, TimeoutAcceptor};
+        use ftl::serve::accept::{limited::LimitedTcpAcceptor, PeekingAcceptor, TimeoutAcceptor};
 
+        #[rustfmt::skip]
         let acceptor = TimeoutAcceptor::new(
+            // 10 second timeout for the entire connection accept process
             Duration::from_secs(10),
-            RustlsAcceptor::new(tls_config).acceptor(LimitedTcpAcceptor::new(NoDelayAcceptor, 50)),
+            // Accept TLS connections with rustls
+            RustlsAcceptor::new(tls_config).acceptor(
+                // limit the number of connections per IP to 50
+                LimitedTcpAcceptor::new(
+                    // TCP_NODELAY, and peek at the first byte of the stream
+                    PeekingAcceptor(NoDelayAcceptor),
+                    50,
+                )
+            ),
         );
 
         // set acceptor to use the tls config, and set that acceptor to use NoDelay
