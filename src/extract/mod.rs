@@ -85,6 +85,7 @@ pub mod path;
 pub mod query;
 pub mod real_ip;
 pub mod scheme;
+pub mod timeout;
 
 pub use crate::body::Form;
 

@@ -33,6 +33,9 @@ pub enum Error {
     #[error("Not Found")]
     NotFound,
 
+    #[error("Request timed out")]
+    TimedOut,
+
     #[error("Unauthorized")]
     Unauthorized,
 
@@ -108,6 +111,7 @@ impl IntoResponse for Error {
             }
             Error::Form(_) => StatusCode::BAD_REQUEST.into_response(),
             Error::NotFound => StatusCode::NOT_FOUND.into_response(),
+            Error::TimedOut => StatusCode::REQUEST_TIMEOUT.into_response(),
             Error::Unauthorized => StatusCode::UNAUTHORIZED.into_response(),
             Error::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
             Error::MissingExtension => StatusCode::INTERNAL_SERVER_ERROR.into_response(),

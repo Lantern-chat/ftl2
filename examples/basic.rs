@@ -86,9 +86,16 @@ async fn main() {
     let redirect_server = server.rebind(["0.0.0.0:8080".parse().unwrap()]);
 
     // spawn the HTTPS server
-    tokio::spawn(
+    tokio::spawn({
+        use ftl::serve::accept::{limited::LimitedTcpAcceptor, TimeoutAcceptor};
+
+        let acceptor = TimeoutAcceptor::new(
+            Duration::from_secs(10),
+            RustlsAcceptor::new(tls_config).acceptor(LimitedTcpAcceptor::new(NoDelayAcceptor, 50)),
+        );
+
         // set acceptor to use the tls config, and set that acceptor to use NoDelay
-        server.acceptor(RustlsAcceptor::new(tls_config).acceptor(NoDelayAcceptor)).serve(
+        server.acceptor(acceptor).serve(
             (
                 RespTimingLayer::default(),  // logs the time taken to process each request
                 CatchPanic::default(),       // spawns each request in a separate task and catches panics
@@ -100,8 +107,8 @@ async fn main() {
                 DeferredEncoding::default(), // encodes deferred responses
             )
                 .layer(router.route_layer(rate_limit)), // routing layer with per-path rate limiting
-        ),
-    );
+        )
+    });
 
     tokio::spawn(
         // setup a redirect server to redirect all http traffic to https
