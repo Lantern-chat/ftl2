@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use futures::FutureExt;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
@@ -188,10 +189,28 @@ impl<I: AsyncWrite> AsyncWrite for TrackedTcpStream<I> {
 
 impl<I> Drop for TrackedTcpStream<I> {
     fn drop(&mut self) {
-        if self.conn.count.fetch_sub(1, Ordering::AcqRel) > 1 {
+        if self.conn.count.fetch_sub(1, Ordering::AcqRel) != 1 {
             return;
         }
 
+        // Note that for each of the following, we have a lock on the entry so at least new connections
+        // can't be added. However, because reasons, a new connection could have been added in the time
+        // you're reading this, so we have to check if the count is still zero before we remove the entry.
+
+        // fast non-blocking path to avoid offloading tasks to another thread
+        if let Some(res) = self.conns.get_async(&self.conn.ip).now_or_never() {
+            let Some(occ) = res else {
+                return;
+            };
+
+            if occ.get().count.load(Ordering::Acquire) == 0 {
+                occ.remove_entry();
+            }
+
+            return;
+        }
+
+        // slow path that still avoids blocking other tasks... by shoving them onto another thread
         tokio::task::block_in_place(|| {
             if let Some(occ) = self.conns.get(&self.conn.ip) {
                 if occ.get().count.load(Ordering::Acquire) == 0 {
