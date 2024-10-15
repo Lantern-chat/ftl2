@@ -86,6 +86,8 @@ impl Drop for Watcher {
     fn drop(&mut self) {
         let count = self.inner().conn_count.fetch_sub(1, Ordering::SeqCst);
 
+        // if count == 1, the new count is 0, so if shutdown is requested
+        // we should kill the server ASAP.
         if count == 1 && self.inner().shutdown.is_notified() {
             self.inner().kill.notify_waiters();
         }
@@ -136,6 +138,7 @@ impl Handle {
 
     async fn wait_internal(&self) {
         if self.0.conn_count.load(Ordering::SeqCst) == 0 {
+            self.kill(); // no connections, kill immediately
             return;
         }
 
@@ -368,20 +371,24 @@ impl<A> Server<A> {
             // futures::select! is required over tokio::select! due to the `accepting` stream,
             // which may be empty, but not terminated.
             futures::select_biased! {
+                // because this is a biased select, shutdown should be checked first so it won't starve.
+                _ = &mut shutdown => break,
+
+                // NOTE: This needs to come before the `accepting.select_next_some()` branch
+                // to avoid it polling a `None` and being less efficient.
                 res = incoming.next() => match res {
                     // NOTE: This `None` branch is technically unreachable due to the current implementation.
                     // However, I'd rather keep it around for future-proofing.
                     None => break,
                     Some((stream, socket_addr)) => accepting.push(FutureWithAssociatedData {
                         future: acceptor.accept(stream, make_service.make_service(socket_addr)),
-                        data: Some((socket_addr,)),
+                        data: Some((socket_addr, handle.watcher())),
                     }),
                 },
 
                 accepted = accepting.select_next_some() => match accepted {
-                    (Ok((stream, service)), (socket_addr,)) => {
+                    (Ok((stream, service)), (socket_addr, watcher)) => {
                         let builder = builder.clone();
-                        let watcher = handle.watcher();
 
                         // spawn new task to handle real HTTP connection
                         tokio::spawn(async move {
@@ -398,32 +405,37 @@ impl<A> Server<A> {
                                 }),
                             ));
 
+                            let mut kill = std::pin::pin!(watcher.0.kill_notified());
+
                             loop {
                                 tokio::select! {
                                     biased;
 
-                                    Err(err) = &mut conn => {
-                                        // honestly, ignore logging hyper errors, so only log if it's not hyper
-                                        if let Err(err) = err.downcast::<hyper::Error>() {
-                                            log::error!("server error: {err:?}");
+                                    _ = &mut kill => break,
+
+                                    res = &mut conn => {
+                                        if let Err(err) = res {
+                                            // honestly, ignore logging hyper errors, so only log if it's not hyper
+                                            if let Err(err) = err.downcast::<hyper::Error>() {
+                                                log::error!("server error: {err:?}");
+                                            }
                                         }
 
-                                        break;
+                                        break; // connection has completed
                                     },
 
                                     _ = watcher.0.shutdown_notified() => {
+                                        // tell the connection to shutdown gracefully, then continue
                                         conn.as_mut().graceful_shutdown();
-                                    }
 
-                                    _ = watcher.0.kill_notified() => break,
+                                        continue;
+                                    }
                                 }
                             }
                         });
                     },
                     _ => continue,
                 },
-
-                _ = &mut shutdown => break,
             }
         }
 
