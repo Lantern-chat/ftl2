@@ -699,6 +699,7 @@ where
     /// Returns a [`Stack`]-ed layer with the rate limiter layer and the error-handler layer combined
     /// that can be directly inserted into an [`crate::Router`].
     #[must_use]
+    #[allow(clippy::type_complexity)]
     pub fn default_handle_error(
         self,
     ) -> Stack<

@@ -6,7 +6,7 @@ use std::{
 
 use smallvec::SmallVec;
 
-/**
+/*
  * ```
  * // Single metric without value
  * Server-Timing: missedCache
