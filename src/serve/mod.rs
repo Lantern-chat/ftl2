@@ -360,9 +360,15 @@ impl<A> Server<A> {
             throttle: None,
         });
 
+        #[cfg(feature = "unicycle")]
+        type FuturesUnordered<F> = unicycle::Unordered<F, unicycle::Futures>;
+
+        #[cfg(not(feature = "unicycle"))]
+        type FuturesUnordered<F> = futures::stream::FuturesUnordered<F>;
+
         // use a FuturesUnordered to handle the accept process without allocating an entire task.
         // This may help avert DoS attacks by limiting the number of tasks that can be spawned.
-        let mut accepting = std::pin::pin!(futures::stream::FuturesUnordered::new());
+        let mut accepting = std::pin::pin!(FuturesUnordered::new());
 
         // since this is fused, create the future ahead of time to simplify polling.
         let mut shutdown = std::pin::pin!(handle.shutdown_notified().fuse());
@@ -380,9 +386,12 @@ impl<A> Server<A> {
                     // NOTE: This `None` branch is technically unreachable due to the current implementation.
                     // However, I'd rather keep it around for future-proofing.
                     None => break,
-                    Some((stream, socket_addr)) => accepting.push(FutureWithAssociatedData {
+
+                    // TODO: Add rate limiting of some kind here, or potentially defer that to eBPF.
+                    #[allow(clippy::let_unit_value)]
+                    Some((stream, socket_addr)) => _ = accepting.push(FutureWithAssociatedData {
                         future: acceptor.accept(stream, make_service.make_service(socket_addr)),
-                        data: Some((socket_addr, handle.watcher())),
+                        data: Some((socket_addr, handle.watcher())), // increments the conn count
                     }),
                 },
 
@@ -392,6 +401,8 @@ impl<A> Server<A> {
 
                         // spawn new task to handle real HTTP connection
                         tokio::spawn(async move {
+                            // NOTE: `conn` technically encompasses a physical connection but can handle multiple HTTP requests, especially
+                            // with HTTP/2. Therefore, you don't have to feel bad if a service spawns its own tasks.
                             let mut conn = std::pin::pin!(builder.serve_connection_with_upgrades(
                                 TokioIo::new(stream),
                                 hyper::service::service_fn(move |mut req| {
