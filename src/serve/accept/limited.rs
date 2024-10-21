@@ -1,7 +1,7 @@
 use std::{
     future::Future,
     io,
-    net::IpAddr,
+    net::{IpAddr, Ipv6Addr},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -41,6 +41,8 @@ impl<A> LimitedTcpAcceptor<A> {
     /// This is useful for making sure clients with randomized IPv6 interfaces
     /// aren't treated as different clients. This can be common in some networks
     /// that attempt to preserve privacy.
+    ///
+    /// Default is `false`.
     pub fn with_privacy_mask(mut self, privacy_mask: bool) -> Self {
         self.privacy_mask = privacy_mask;
         self
@@ -76,13 +78,11 @@ where
 
             let (stream, service) = self.acceptor.accept(stream, service).await?;
 
-            if self.privacy_mask {
-                ip = match ip {
-                    IpAddr::V4(ip) => IpAddr::V4(ip),
-                    IpAddr::V6(ip) => {
-                        IpAddr::V6(From::from(ip.to_bits() & 0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000))
-                    }
-                };
+            match ip {
+                IpAddr::V6(ref mut ip) if self.privacy_mask => {
+                    *ip = Ipv6Addr::from_bits(ip.to_bits() & 0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000);
+                }
+                _ => {}
             }
 
             let mut failed = false;
@@ -199,9 +199,7 @@ impl<I> Drop for TrackedTcpStream<I> {
 
         // fast non-blocking path to avoid offloading tasks to another thread
         if let Some(res) = self.conns.get_async(&self.conn.ip).now_or_never() {
-            let Some(occ) = res else {
-                return;
-            };
+            let Some(occ) = res else { return };
 
             if occ.get().count.load(Ordering::Acquire) == 0 {
                 occ.remove_entry();

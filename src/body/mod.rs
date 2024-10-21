@@ -35,6 +35,7 @@ pub mod deferred;
 pub mod wrap;
 
 mod arbitrary;
+mod limited;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {
@@ -47,8 +48,8 @@ pub enum BodyError {
     #[error("Stream Aborted")]
     StreamAborted,
 
-    #[error(transparent)]
-    LengthLimitError(#[from] http_body_util::LengthLimitError),
+    #[error("Length Limit Exceeded")]
+    LengthLimitError,
 
     #[error(transparent)]
     Generic(Box<dyn Error + Send + Sync + 'static>),
@@ -58,6 +59,12 @@ pub enum BodyError {
 
     #[error("Arbitrary Body Polled, this is a bug")]
     ArbitraryBodyPolled,
+}
+
+impl From<http_body_util::LengthLimitError> for BodyError {
+    fn from(_: http_body_util::LengthLimitError) -> Self {
+        BodyError::LengthLimitError
+    }
 }
 
 impl IntoResponse for BodyError {
@@ -78,8 +85,8 @@ impl IntoResponse for BodyError {
                 Cow::Borrowed("The body stream was aborted"),
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
-            BodyError::LengthLimitError(e) => (
-                format!("The body was too large: {e}").into(),
+            BodyError::LengthLimitError => (
+                Cow::Borrowed("Body too large, Length limit exceeded"),
                 StatusCode::PAYLOAD_TOO_LARGE,
             ),
             BodyError::HyperError(err) => match err {
@@ -128,6 +135,7 @@ pub struct Body(pub(crate) BodyInner);
 pub(crate) enum BodyInner {
     #[default]
     Empty,
+    Limited(#[pin] limited::Limited),
     Incoming(#[pin] hyper::body::Incoming),
     Full(#[pin] Full<Bytes>),
     Channel(#[pin] StreamBody<ReceiverStream<Result<Frame<Bytes>, BodyError>>>),
@@ -180,6 +188,7 @@ impl HttpBody for BodyInner {
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.project() {
             BodyProj::Empty => Poll::Ready(None),
+            BodyProj::Limited(inner) => inner.poll_frame(cx),
             BodyProj::Incoming(incoming) => incoming.poll_frame(cx).map_err(BodyError::from),
             BodyProj::Full(full) => full.poll_frame(cx).map_err(|_| unreachable!()),
             //BodyProj::Buf(buf) => buf.poll_frame(cx).map_err(|_| unreachable!()),
@@ -196,6 +205,7 @@ impl HttpBody for BodyInner {
     fn is_end_stream(&self) -> bool {
         match self {
             Self::Empty => true,
+            Self::Limited(inner) => inner.is_end_stream(),
             Self::Incoming(inner) => inner.is_end_stream(),
             Self::Full(inner) => inner.is_end_stream(),
             Self::Channel(inner) => inner.is_end_stream(),
@@ -210,6 +220,7 @@ impl HttpBody for BodyInner {
     fn size_hint(&self) -> hyper::body::SizeHint {
         match self {
             Self::Empty => hyper::body::SizeHint::new(),
+            Self::Limited(inner) => inner.size_hint(),
             Self::Incoming(inner) => inner.size_hint(),
             Self::Full(inner) => inner.size_hint(),
             Self::Channel(inner) => inner.size_hint(),
@@ -288,6 +299,32 @@ impl Body {
         }
     }
 
+    /// Limit the number of bytes that the body will yield.
+    /// Attempting to read more bytes will return an error.
+    ///
+    /// If the body is already limited, the new limit will be the minimum
+    /// of the remaining current limit and the new limit given.
+    ///
+    /// Arbitrary and deferred bodies cannot be limited, and will return an error.
+    pub fn limit(mut self, limit: usize) -> Result<Self, BodyError> {
+        Ok(match self {
+            Body(BodyInner::Empty) => self, // it's already empty, don't bother boxing.
+
+            Body(BodyInner::Limited(ref mut limited)) => {
+                limited.remaining = limited.remaining.min(limit);
+                self
+            }
+
+            Body(BodyInner::Arbitrary(_)) => return Err(BodyError::ArbitraryBodyPolled),
+            Body(BodyInner::Deferred(_)) => return Err(BodyError::DeferredNotConverted),
+
+            _ => Body(BodyInner::Limited(limited::Limited {
+                inner: Box::new(self),
+                remaining: limit,
+            })),
+        })
+    }
+
     /// Create a new bounded channel with the given capacity where
     /// the receiver will forward given frames to the HTTP Body.
     pub fn channel(capacity: usize) -> (Self, BodySender) {
@@ -339,6 +376,14 @@ impl Body {
                 Some(value.assume_init())
             },
             _ => None,
+        }
+    }
+
+    /// Returns the original size hint of the body before any modifications, such as limiting it.
+    pub fn original_size_hint(&self) -> hyper::body::SizeHint {
+        match self.0 {
+            BodyInner::Limited(ref limited) => limited.inner.size_hint(),
+            _ => self.size_hint(),
         }
     }
 }

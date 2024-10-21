@@ -117,6 +117,9 @@ where
         &self.state
     }
 
+    /// Set whether or not to trim trailing slashes from paths.
+    ///
+    /// By default, this is set to `true`.
     pub fn trim_trailing_slash(mut self, trim: bool) -> Self {
         self.trim_trailing_slash = trim;
         self
@@ -417,17 +420,13 @@ impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
         };
 
         match maybe_match {
-            Some(match_) => {
-                let handler = match self.routes.get(match_.value) {
+            Some(match_) => Ok(matchit::Match {
+                value: match self.routes.get(match_.value) {
                     Some(handler) => handler,
                     None => return Err(self.routes.get(&0)),
-                };
-
-                Ok(matchit::Match {
-                    value: handler,
-                    params: match_.params,
-                })
-            }
+                },
+                params: match_.params,
+            }),
             None => Err(self.routes.get(&0)), // fallback route
         }
     }
