@@ -306,7 +306,7 @@ impl Body {
     /// of the remaining current limit and the new limit given.
     ///
     /// Arbitrary and deferred bodies cannot be limited, and will return an error.
-    pub fn limit(mut self, limit: usize) -> Result<Self, BodyError> {
+    pub fn limit(mut self, limit: u64) -> Result<Self, BodyError> {
         Ok(match self {
             Body(BodyInner::Empty) => self, // it's already empty, don't bother boxing.
 

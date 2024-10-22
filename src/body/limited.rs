@@ -9,7 +9,7 @@ use super::BodyError;
 
 #[pin_project::pin_project]
 pub struct Limited {
-    pub(super) remaining: usize,
+    pub(super) remaining: u64,
     #[pin]
     pub(super) inner: Box<super::Body>,
 }
@@ -29,7 +29,7 @@ impl Body for Limited {
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
             Poll::Ready(Some(Ok(frame))) => Poll::Ready(Some(match frame.data_ref() {
-                Some(data) => match this.remaining.checked_sub(data.remaining()) {
+                Some(data) => match this.remaining.checked_sub(data.remaining() as u64) {
                     Some(remaining) => {
                         *this.remaining = remaining;
                         Ok(frame)
@@ -49,19 +49,15 @@ impl Body for Limited {
     }
 
     fn size_hint(&self) -> SizeHint {
-        match u64::try_from(self.remaining) {
-            Ok(n) => {
-                let mut hint = self.inner.size_hint();
-                if hint.lower() >= n {
-                    hint.set_exact(n)
-                } else if let Some(max) = hint.upper() {
-                    hint.set_upper(n.min(max))
-                } else {
-                    hint.set_upper(n)
-                }
-                hint
-            }
-            Err(_) => self.inner.size_hint(),
+        let n = self.remaining;
+        let mut hint = self.inner.size_hint();
+        if hint.lower() >= n {
+            hint.set_exact(n)
+        } else if let Some(max) = hint.upper() {
+            hint.set_upper(n.min(max))
+        } else {
+            hint.set_upper(n)
         }
+        hint
     }
 }
