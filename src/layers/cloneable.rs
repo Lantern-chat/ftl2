@@ -25,15 +25,15 @@ impl<S> Layer<S> for Cloneable {
     }
 }
 
-impl<S, Res> Service<Res> for Cloneable<S>
+impl<S, Req> Service<Req> for Cloneable<S>
 where
-    S: Service<Res>,
+    S: Service<Req>,
 {
     type Response = S::Response;
     type Error = S::Error;
 
     #[inline(always)]
-    fn call(&self, req: Res) -> impl ServiceFuture<Self::Response, Self::Error> {
+    fn call(&self, req: Req) -> impl ServiceFuture<Self::Response, Self::Error> {
         self.0.call(req)
     }
 }

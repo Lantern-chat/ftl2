@@ -4,6 +4,7 @@ use crate::{
     Layer, Request,
 };
 
+#[derive(Debug, Clone, Copy)]
 #[must_use]
 pub struct LimitReqBody<S = ()> {
     inner: S,
@@ -57,12 +58,21 @@ impl<S> Layer<S> for LimitReqBody {
     }
 }
 
-impl<S, Res> Service<Request> for LimitReqBody<S>
+#[derive(Debug, thiserror::Error)]
+pub enum LimitBodyError<E> {
+    #[error(transparent)]
+    Inner(E),
+
+    #[error(transparent)]
+    BodyError(BodyError),
+}
+
+impl<S> Service<Request> for LimitReqBody<S>
 where
-    S: Service<Request, Response = Res, Error: From<BodyError>>,
+    S: Service<Request>,
 {
-    type Response = Res;
-    type Error = S::Error;
+    type Response = S::Response;
+    type Error = LimitBodyError<S::Error>;
 
     #[inline]
     fn call(&self, req: Request) -> impl ServiceFuture<Self::Response, Self::Error> {
@@ -70,12 +80,15 @@ where
             let (parts, body) = req.into_parts();
 
             if self.reject && body.original_size_hint().lower() > self.limit {
-                return Err(BodyError::LengthLimitError.into());
+                return Err(LimitBodyError::BodyError(BodyError::LengthLimitError));
             }
 
             match body.limit(self.limit) {
-                Ok(body) => self.inner.call(Request::from_parts(parts, body)).await,
-                Err(e) => Err(e.into()),
+                Ok(body) => match self.inner.call(Request::from_parts(parts, body)).await {
+                    Ok(res) => Ok(res),
+                    Err(e) => Err(LimitBodyError::Inner(e)),
+                },
+                Err(e) => Err(LimitBodyError::BodyError(e)),
             }
         }
     }

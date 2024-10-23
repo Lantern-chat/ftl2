@@ -21,15 +21,15 @@ impl<F> RewriteService<F>
 where
     F: Fn(&RequestParts) -> String + Clone + Send + Sync + 'static,
 {
-    pub fn new(kind: RedirectKind, f: F) -> Self {
+    pub const fn new(kind: RedirectKind, f: F) -> Self {
         Self(kind, f)
     }
 
-    pub fn permanent(f: F) -> Self {
+    pub const fn permanent(f: F) -> Self {
         Self(RedirectKind::Permanent, f)
     }
 
-    pub fn temporary(f: F) -> Self {
+    pub const fn temporary(f: F) -> Self {
         Self(RedirectKind::Temporary, f)
     }
 }
@@ -41,8 +41,11 @@ where
     type Response = http::Response<http_body_util::Empty<bytes::Bytes>>;
     type Error = Infallible;
 
+    #[inline]
     fn call(&self, req: http::Request<B>) -> impl crate::service::ServiceFuture<Self::Response, Self::Error> {
-        let mut parts = req.into_parts().0;
+        let (mut parts, body) = req.into_parts();
+
+        drop(body); // explicitly drop the body
 
         if let Ok(authority) = crate::extract::extract_authority(&parts) {
             parts.extensions.insert(authority);

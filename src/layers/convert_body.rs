@@ -4,7 +4,7 @@ use crate::{body::Body, service::ServiceFuture, Layer, Request, Service};
 #[repr(transparent)]
 pub struct ConvertBody<S = ()>(pub S);
 
-impl<S> Layer<S> for ConvertBody<()> {
+impl<S> Layer<S> for ConvertBody {
     type Service = ConvertBody<S>;
 
     fn layer(&self, service: S) -> Self::Service {
@@ -15,7 +15,7 @@ impl<S> Layer<S> for ConvertBody<()> {
 impl<S, B> Service<http::Request<B>> for ConvertBody<S>
 where
     S: Service<Request>,
-    B: http_body::Body<Data = bytes::Bytes, Error: std::error::Error + Send + Sync + 'static> + Send + 'static,
+    B: http_body::Body<Data = bytes::Bytes, Error: core::error::Error + Send + Sync + 'static> + Send + 'static,
 {
     type Error = S::Error;
     type Response = S::Response;
