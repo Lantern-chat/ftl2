@@ -404,7 +404,7 @@ impl<K: Key> RateLimitLayerBuilder<K> {
     /// ```rust,no_run,ignore
     /// # use std::time::Duration;
     /// use ftl::{extract::Extension, routing::get, Router};
-    /// use axum_gcra::{RateLimitLayer, extensions::RateLimiter};
+    /// use ftl::layers::rate_limit::{RateLimitLayer, extensions::RateLimiter};
     ///
     /// // Note this must be identical to the key used in the rate limiter layer
     /// type Key = ();

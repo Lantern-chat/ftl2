@@ -11,8 +11,6 @@ use crate::{
 
 /// [`Layer`] that applies [`HandleError`] which is a [`Service`] adapter
 /// that handles errors by converting them into responses.
-///
-/// See [module docs](self) for more details on axum's error handling model.
 pub struct HandleErrorLayer<F, T> {
     f: F,
     _extractor: PhantomData<fn() -> T>,
@@ -60,8 +58,6 @@ where
 }
 
 /// A [`Service`] adapter that handles errors by converting them into responses.
-///
-/// See [module docs](self) for more details on axum's error handling model.
 pub struct HandleError<S, F, T> {
     inner: S,
     f: F,
