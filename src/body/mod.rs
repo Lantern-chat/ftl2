@@ -1,5 +1,6 @@
 use std::{
     any::TypeId,
+    borrow::Cow,
     error::Error,
     pin::Pin,
     task::{Context, Poll},
@@ -264,6 +265,16 @@ impl From<String> for Body {
     #[inline]
     fn from(value: String) -> Self {
         Bytes::from(value).into()
+    }
+}
+
+impl From<Cow<'static, str>> for Body {
+    #[inline]
+    fn from(value: Cow<'static, str>) -> Self {
+        Body::from(match value {
+            Cow::Borrowed(s) => Bytes::from_static(s.as_bytes()),
+            Cow::Owned(s) => Bytes::from(s),
+        })
     }
 }
 

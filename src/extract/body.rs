@@ -89,6 +89,14 @@ impl<S> FromRequest<S> for String {
     }
 }
 
+impl<S> FromRequest<S> for Cow<'static, str> {
+    type Rejection = crate::Error;
+
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move { Ok(Cow::Owned(req.body_mut().to_string().await?)) }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct LossyString(pub String);
