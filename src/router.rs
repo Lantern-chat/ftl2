@@ -408,7 +408,7 @@ impl<STATE, RETURN, SERVICE> Router<STATE, RETURN, SERVICE> {
             }
         };
 
-        if self.trim_trailing_slash {
+        if self.trim_trailing_slash && path != "/" {
             path = path.trim_end_matches('/');
         }
 
