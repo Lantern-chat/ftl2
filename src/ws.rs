@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::headers::Header;
 use crate::{FromRequest, IntoResponse, Request, Response};
 
@@ -15,6 +13,9 @@ use tokio_tungstenite::{
     tungstenite::{self, protocol},
     WebSocketStream,
 };
+
+pub use bytes::Bytes;
+pub use tokio_tungstenite::tungstenite::Utf8Bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum WsError {
@@ -90,7 +91,7 @@ impl<S> FromRequest<S> for Ws {
                     return Err(WsError::MethodNotConnect);
                 }
 
-                if req.extensions().get::<hyper::ext::Protocol>().map_or(true, |p| p.as_str() != "websocket") {
+                if req.extensions().get::<hyper::ext::Protocol>().is_none_or(|p| p.as_str() != "websocket") {
                     return Err(WsError::InvalidProtocolPsuedoHeader);
                 }
 
@@ -306,21 +307,21 @@ pub struct Message {
 
 impl Message {
     /// Construct a new Text `Message`.
-    pub fn text<S: Into<String>>(s: S) -> Message {
+    pub fn text<S: Into<Utf8Bytes>>(s: S) -> Message {
         Message {
             inner: protocol::Message::text(s),
         }
     }
 
     /// Construct a new Binary `Message`.
-    pub fn binary<V: Into<Vec<u8>>>(v: V) -> Message {
+    pub fn binary<V: Into<Bytes>>(v: V) -> Message {
         Message {
             inner: protocol::Message::binary(v),
         }
     }
 
     /// Construct a new Ping `Message`.
-    pub fn ping<V: Into<Vec<u8>>>(v: V) -> Message {
+    pub fn ping<V: Into<Bytes>>(v: V) -> Message {
         Message {
             inner: protocol::Message::Ping(v.into()),
         }
@@ -331,7 +332,7 @@ impl Message {
     /// Note that one rarely needs to manually construct a Pong message because the underlying tungstenite socket
     /// automatically responds to the Ping messages it receives. Manual construction might still be useful in some cases
     /// like in tests or to send unidirectional heartbeats.
-    pub fn pong<V: Into<Vec<u8>>>(v: V) -> Message {
+    pub fn pong<V: Into<Bytes>>(v: V) -> Message {
         Message {
             inner: protocol::Message::Pong(v.into()),
         }
@@ -345,7 +346,7 @@ impl Message {
     }
 
     /// Construct a Close `Message` with a code and reason.
-    pub fn close_with(code: impl Into<u16>, reason: impl Into<Cow<'static, str>>) -> Message {
+    pub fn close_with(code: impl Into<u16>, reason: impl Into<Utf8Bytes>) -> Message {
         Message {
             inner: protocol::Message::Close(Some(protocol::frame::CloseFrame {
                 code: protocol::frame::coding::CloseCode::from(code.into()),
@@ -418,7 +419,7 @@ impl Message {
 
     /// Destructure this message into binary data.
     #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub fn into_bytes(self) -> Bytes {
         self.inner.into_data()
     }
 }
@@ -430,7 +431,7 @@ impl fmt::Debug for Message {
     }
 }
 
-impl From<Message> for Vec<u8> {
+impl From<Message> for Bytes {
     fn from(m: Message) -> Self {
         m.into_bytes()
     }

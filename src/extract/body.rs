@@ -37,6 +37,17 @@ impl<S> FromRequest<S> for Bytes {
     }
 }
 
+impl<S> FromRequest<S> for tokio_tungstenite::tungstenite::Utf8Bytes {
+    type Rejection = crate::Error;
+
+    fn from_request(mut req: Request, _state: &S) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            tokio_tungstenite::tungstenite::Utf8Bytes::try_from(req.body_mut().take().collect().await?.to_bytes())
+                .map_err(crate::Error::from)
+        }
+    }
+}
+
 impl<S> FromRequest<S> for BytesMut {
     type Rejection = crate::Error;
 
