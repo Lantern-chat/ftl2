@@ -37,6 +37,7 @@ impl<S> FromRequest<S> for Bytes {
     }
 }
 
+#[cfg(feature = "ws")]
 impl<S> FromRequest<S> for tokio_tungstenite::tungstenite::Utf8Bytes {
     type Rejection = crate::Error;
 

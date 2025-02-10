@@ -77,6 +77,7 @@ pub enum Error {
     #[error("Authority error: {0}")]
     Authority(#[from] crate::extract::AuthorityError),
 
+    #[cfg(feature = "ws")]
     #[error("Websocket error: {0}")]
     WebsocketError(#[from] crate::ws::WsError),
 
@@ -138,6 +139,8 @@ impl IntoResponse for Error {
             Error::Path(path_error) => (path_error.to_string(), StatusCode::BAD_REQUEST).into_response(),
             Error::Scheme(scheme_error) => scheme_error.into_response(),
             Error::Authority(authority_error) => authority_error.into_response(),
+
+            #[cfg(feature = "ws")]
             Error::WebsocketError(ws_error) => ws_error.into_response(),
 
             Error::Custom(e) => {

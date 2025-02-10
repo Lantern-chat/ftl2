@@ -23,6 +23,8 @@ pub mod rewrite;
 pub mod router;
 pub mod serve;
 pub mod service;
+
+#[cfg(feature = "ws")]
 pub mod ws;
 
 #[cfg(feature = "fs")]
