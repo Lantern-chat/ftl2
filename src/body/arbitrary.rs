@@ -28,7 +28,7 @@ fn drop_fn<T>(ptr: *mut u8) {
 
 impl SmallArbitraryData {
     pub fn same_ty<T>(&self) -> bool {
-        (drop_fn::<T> as fn(*mut u8)) == self.drop_fn
+        std::ptr::fn_addr_eq(drop_fn::<T> as fn(*mut u8), self.drop_fn)
     }
 
     pub unsafe fn new<T: 'static>(value: T) -> Self {
